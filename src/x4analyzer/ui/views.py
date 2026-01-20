@@ -100,9 +100,20 @@ class ViewRenderer:
         self.console.clear()
         self.console.print("[bold cyan]STATION VIEW[/bold cyan]\n")
 
-        # List all stations
+        # Sort stations by sector, then by name
+        sorted_stations = sorted(self.empire.stations, key=lambda s: (s.sector, s.name))
+
+        # List all stations grouped by sector
         self.console.print("[bold]Your Stations:[/bold]")
-        for i, station in enumerate(self.empire.stations, 1):
+        current_sector = None
+        for i, station in enumerate(sorted_stations, 1):
+            # Print sector header when it changes
+            if station.sector != current_sector:
+                if current_sector is not None:
+                    self.console.print()  # Blank line between sectors
+                self.console.print(f"[yellow]{station.sector}:[/yellow]")
+                current_sector = station.sector
+
             products = len(station.unique_products)
             modules = len(station.production_modules)
             self.console.print(
@@ -118,12 +129,12 @@ class ViewRenderer:
             return
 
         idx = int(choice) - 1
-        if idx < 0 or idx >= len(self.empire.stations):
+        if idx < 0 or idx >= len(sorted_stations):
             self.console.print("[red]Invalid selection[/red]")
             self._wait_for_enter()
             return
 
-        self._display_station_details(self.empire.stations[idx])
+        self._display_station_details(sorted_stations[idx])
 
     def _display_station_details(self, station: Station):
         """Display detailed information about a station."""
@@ -351,4 +362,4 @@ class ViewRenderer:
 
     def _wait_for_enter(self):
         """Wait for user to press Enter."""
-        self.console.input("\n[dim]Press Enter to continue...[/dim]")
+        self.console.input("\n[bold cyan]Press Enter to return to main menu...[/bold cyan]")

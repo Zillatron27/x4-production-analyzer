@@ -94,7 +94,7 @@ class SaveFileParser:
             flavor_samples = random.sample(FLAVOR_TEXTS, min(3, len(FLAVOR_TEXTS)))
             for flavor in flavor_samples:
                 progress.update(task, description=f"[cyan]{flavor}[/cyan]")
-                time.sleep(0.4)
+                time.sleep(1.0)
 
             def update_progress(msg: str):
                 progress.update(task, description=msg)
