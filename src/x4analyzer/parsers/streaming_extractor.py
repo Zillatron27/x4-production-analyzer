@@ -85,12 +85,18 @@ class StreamingDataExtractor:
         stations_found = 0
 
         try:
-            # Open gzipped file and create streaming parser
-            with gzip.open(self.file_path, 'rb') as gz_file:
+            # Try to open as gzipped file first, fall back to plain XML
+            try:
+                file_handle = gzip.open(self.file_path, 'rb')
                 if progress_callback:
-                    progress_callback("Streaming XML data...", 0)
+                    progress_callback("Streaming gzipped XML data...", 0)
+            except gzip.BadGzipFile:
+                if progress_callback:
+                    progress_callback("Not gzipped, reading as plain XML...", 0)
+                file_handle = open(self.file_path, 'rb')
 
-                context = ET.iterparse(gz_file, events=('start', 'end'))
+            with file_handle:
+                context = ET.iterparse(file_handle, events=('start', 'end'))
 
                 for event, elem in context:
                     elements_processed += 1
