@@ -1,11 +1,14 @@
 """Main application entry point."""
 
 import sys
+import time
 from pathlib import Path
 from rich.console import Console
+from rich.progress import Progress, SpinnerColumn, TextColumn
+import random
 
-from .parsers.save_parser import SaveFileParser
-from .parsers.data_extractor import DataExtractor
+from .parsers.save_parser import SaveFileParser, FLAVOR_TEXTS
+from .parsers.streaming_extractor import StreamingDataExtractor
 from .analyzers.production_analyzer import ProductionAnalyzer
 from .ui.dashboard import Dashboard
 from .ui.views import ViewRenderer
@@ -22,7 +25,7 @@ class X4Analyzer:
         self.views = None
 
     def load_save_file(self, file_path: str = None):
-        """Load and parse a save file."""
+        """Load and parse a save file using streaming extractor."""
         # Try to find save file if not provided
         if not file_path:
             self.console.print("[cyan]Searching for X4 save file...[/cyan]")
@@ -42,13 +45,24 @@ class X4Analyzer:
             return False
 
         try:
-            # Parse save file
-            parser = SaveFileParser(file_path)
             self.console.print()
-            root = parser.parse_with_progress()
 
-            # Extract data
-            extractor = DataExtractor(root)
+            # Show flavor text
+            with Progress(
+                SpinnerColumn(),
+                TextColumn("[progress.description]{task.description}"),
+                transient=True,
+            ) as progress:
+                task = progress.add_task("Loading save file...", total=None)
+
+                # Show a few random flavor texts
+                flavor_samples = random.sample(FLAVOR_TEXTS, min(3, len(FLAVOR_TEXTS)))
+                for flavor in flavor_samples:
+                    progress.update(task, description=f"[cyan]{flavor}[/cyan]")
+                    time.sleep(1.0)
+
+            # Use streaming extractor for memory efficiency
+            extractor = StreamingDataExtractor(file_path)
 
             def progress_callback(msg, count):
                 self.console.print(f"[cyan]{msg}[/cyan]")
