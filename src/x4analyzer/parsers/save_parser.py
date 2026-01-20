@@ -2,9 +2,32 @@
 
 import gzip
 import xml.etree.ElementTree as ET
+import time
+import random
 from pathlib import Path
 from typing import Optional, Callable
 from rich.progress import Progress, SpinnerColumn, TextColumn, BarColumn
+
+
+# Fun flavor text for loading sequence
+FLAVOR_TEXTS = [
+    "RETICULATING SPLINES...",
+    "CALIBRATING FLUX CAPACITORS...",
+    "OPTIMIZING JUMP ROUTES...",
+    "CALCULATING HYPERSPACE COORDINATES...",
+    "ANALYZING SUBSPACE FIELDS...",
+    "CHANNELING TACHYONS...",
+    "INITIALIZING QUANTUM PROCESSORS...",
+    "SYNCHRONIZING TRADE ALGORITHMS...",
+    "MAPPING SECTOR NETWORKS...",
+    "DECRYPTING STATION MANIFESTS...",
+    "TRIANGULATING GATE POSITIONS...",
+    "PARSING GALACTIC ECONOMICS...",
+    "INDEXING PRODUCTION CHAINS...",
+    "SCANNING CARGO MANIFESTS...",
+    "COMPILING TRADE ROUTES...",
+    "ANALYZING WARE DEPENDENCIES...",
+]
 
 
 class SaveFileParser:
@@ -59,13 +82,19 @@ class SaveFileParser:
         return self.root
 
     def parse_with_progress(self) -> ET.Element:
-        """Parse with rich progress display."""
+        """Parse with rich progress display and flavor text."""
         with Progress(
             SpinnerColumn(),
             TextColumn("[progress.description]{task.description}"),
             transient=True,
         ) as progress:
             task = progress.add_task("Loading save file...", total=None)
+
+            # Show a few random flavor texts before parsing
+            flavor_samples = random.sample(FLAVOR_TEXTS, min(3, len(FLAVOR_TEXTS)))
+            for flavor in flavor_samples:
+                progress.update(task, description=f"[cyan]{flavor}[/cyan]")
+                time.sleep(0.4)
 
             def update_progress(msg: str):
                 progress.update(task, description=msg)

@@ -1,11 +1,23 @@
 """Extract game data from parsed X4 save XML."""
 
 import xml.etree.ElementTree as ET
+import random
 from typing import List, Optional, Callable
 from ..models.entities import (
     Station, ProductionModule, Ship, TradeResource, EmpireData
 )
 from ..models.ware_database import get_ware
+
+
+# Flavor text for data extraction phases
+EXTRACTION_FLAVOR = [
+    "Analyzing station configurations",
+    "Cataloging production modules",
+    "Mapping logistics networks",
+    "Computing resource flows",
+    "Evaluating cargo manifests",
+    "Assessing module efficiency",
+]
 
 
 class DataExtractor:
@@ -28,6 +40,11 @@ class DataExtractor:
         """
         empire = EmpireData()
 
+        # Show some flavor text before extraction
+        if progress_callback:
+            flavor = random.choice(EXTRACTION_FLAVOR)
+            progress_callback(flavor + "...", 0)
+
         # Extract metadata
         if progress_callback:
             progress_callback("Extracting metadata...", 0)
@@ -36,7 +53,8 @@ class DataExtractor:
 
         # Build ship lookup table first
         if progress_callback:
-            progress_callback("Indexing ships...", 0)
+            flavor = random.choice(EXTRACTION_FLAVOR)
+            progress_callback(flavor + "...", 0)
         self._build_ship_lookup()
 
         # Extract stations
