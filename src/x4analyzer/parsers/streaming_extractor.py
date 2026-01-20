@@ -83,6 +83,17 @@ class StreamingDataExtractor:
                 for event, elem in context:
                     elements_processed += 1
 
+                    # DEBUG: Show first 2000 elements to understand structure
+                    if elements_processed <= 2000 and progress_callback:
+                        tag_info = f"{elem.tag}"
+                        if elem.get('class'):
+                            tag_info += f" class={elem.get('class')}"
+                        if elem.get('owner'):
+                            tag_info += f" owner={elem.get('owner')}"
+                        if elem.get('name'):
+                            tag_info += f" name={elem.get('name')[:20]}"
+                        progress_callback(f"DEBUG [{event:5s}] {elements_processed:4d}: {tag_info}", 0)
+
                     # Progress update every 10,000 elements
                     if elements_processed % 10000 == 0 and progress_callback:
                         progress_callback(
@@ -125,21 +136,35 @@ class StreamingDataExtractor:
                                 station_trade_data = {}
                                 station_traders = 0
                                 station_miners = 0
+                                if progress_callback and stations_found < 2:  # Only debug first 2 stations
+                                    progress_callback(f"DEBUG: Entering station {current_station_elem['name']}", stations_found)
 
                     # === NESTED TAG TRACKING ===
                     elif event == 'start' and in_player_station:
                         if elem.tag == 'construction':
                             in_construction = True
+                            if progress_callback and stations_found < 2:
+                                progress_callback(f"DEBUG: Entered construction section", stations_found)
                         elif elem.tag == 'sequence' and in_construction:
                             in_sequence = True
+                            if progress_callback and stations_found < 2:
+                                progress_callback(f"DEBUG: Entered sequence section", stations_found)
                         elif elem.tag == 'trade':
                             in_trade = True
+                            if progress_callback and stations_found < 2:
+                                progress_callback(f"DEBUG: Entered trade section", stations_found)
                         elif elem.tag == 'offers' and in_trade:
                             in_offers = True
+                            if progress_callback and stations_found < 2:
+                                progress_callback(f"DEBUG: Entered offers section", stations_found)
                         elif elem.tag == 'production' and in_offers:
                             in_production = True
+                            if progress_callback and stations_found < 2:
+                                progress_callback(f"DEBUG: Entered production section", stations_found)
                         elif elem.tag == 'subordinates':
                             in_subordinates = True
+                            if progress_callback and stations_found < 2:
+                                progress_callback(f"DEBUG: Entered subordinates section", stations_found)
 
                     # === DATA EXTRACTION ===
                     elif event == 'end' and in_player_station:
