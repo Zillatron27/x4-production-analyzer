@@ -98,12 +98,16 @@ class StreamingDataExtractor:
                                 timestamp = int(timestamp_str)
                                 dt = datetime.fromtimestamp(timestamp)
                                 self.save_timestamp = dt.strftime("%Y-%m-%d %H:%M:%S")
+                                if progress_callback:
+                                    progress_callback(f"Found save date: {self.save_timestamp}", 0)
                             except (ValueError, OSError):
                                 pass
                         elem.clear()
 
                     elif event == 'end' and elem.tag == 'player' and not self.player_name:
                         self.player_name = elem.get("name", "Unknown")
+                        if progress_callback:
+                            progress_callback(f"Found player: {self.player_name}", 0)
                         elem.clear()
 
                     # === STATION DETECTION ===
@@ -151,6 +155,8 @@ class StreamingDataExtractor:
                                         'ware_id': ware_id,
                                         'index': elem.get('index', '0')
                                     })
+                                    if progress_callback and len(station_production_modules) == 1:
+                                        progress_callback(f"Found production module: {ware_id}", stations_found)
                             elem.clear()
 
                         # Trade data (inputs/outputs)
