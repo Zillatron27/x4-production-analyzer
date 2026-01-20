@@ -45,9 +45,14 @@ class StreamingDataExtractor:
         Returns:
             EmpireData object with all extracted information
         """
+        # Open debug log file
+        debug_log = open('/tmp/x4_debug.log', 'w')
+        debug_log.write("=== X4 Streaming Parser Debug Log ===\n\n")
+
         if progress_callback:
             flavor = random.choice(EXTRACTION_FLAVOR)
             progress_callback(flavor + "...", 0)
+            progress_callback("DEBUG: Writing detailed log to /tmp/x4_debug.log", 0)
 
         empire = EmpireData()
         stations = []
@@ -83,8 +88,8 @@ class StreamingDataExtractor:
                 for event, elem in context:
                     elements_processed += 1
 
-                    # DEBUG: Show first 2000 elements to understand structure
-                    if elements_processed <= 2000 and progress_callback:
+                    # DEBUG: Log first 2000 elements to understand structure
+                    if elements_processed <= 2000:
                         tag_info = f"{elem.tag}"
                         if elem.get('class'):
                             tag_info += f" class={elem.get('class')}"
@@ -92,7 +97,13 @@ class StreamingDataExtractor:
                             tag_info += f" owner={elem.get('owner')}"
                         if elem.get('name'):
                             tag_info += f" name={elem.get('name')[:20]}"
-                        progress_callback(f"DEBUG [{event:5s}] {elements_processed:4d}: {tag_info}", 0)
+                        if elem.get('date'):
+                            tag_info += f" date={elem.get('date')}"
+                        debug_log.write(f"[{event:5s}] {elements_processed:4d}: {tag_info}\n")
+
+                        # Show progress every 100 elements
+                        if elements_processed % 100 == 0 and progress_callback:
+                            progress_callback(f"Logged {elements_processed} elements to debug file", 0)
 
                     # Progress update every 10,000 elements
                     if elements_processed % 10000 == 0 and progress_callback:
@@ -103,20 +114,24 @@ class StreamingDataExtractor:
 
                     # === METADATA EXTRACTION (first pass) ===
                     if event == 'end' and elem.tag == 'save' and not self.save_timestamp:
+                        debug_log.write(f"\n*** SAVE TAG FOUND! date={elem.get('date', 'NONE')} ***\n")
                         timestamp_str = elem.get("date", "")
                         if timestamp_str:
                             try:
                                 timestamp = int(timestamp_str)
                                 dt = datetime.fromtimestamp(timestamp)
                                 self.save_timestamp = dt.strftime("%Y-%m-%d %H:%M:%S")
+                                debug_log.write(f"*** Save timestamp extracted: {self.save_timestamp} ***\n")
                                 if progress_callback:
                                     progress_callback(f"Found save date: {self.save_timestamp}", 0)
-                            except (ValueError, OSError):
-                                pass
+                            except (ValueError, OSError) as e:
+                                debug_log.write(f"*** Error parsing timestamp: {e} ***\n")
                         elem.clear()
 
                     elif event == 'end' and elem.tag == 'player' and not self.player_name:
+                        debug_log.write(f"\n*** PLAYER TAG FOUND! name={elem.get('name', 'NONE')} ***\n")
                         self.player_name = elem.get("name", "Unknown")
+                        debug_log.write(f"*** Player name extracted: {self.player_name} ***\n")
                         if progress_callback:
                             progress_callback(f"Found player: {self.player_name}", 0)
                         elem.clear()
@@ -136,33 +151,47 @@ class StreamingDataExtractor:
                                 station_trade_data = {}
                                 station_traders = 0
                                 station_miners = 0
-                                if progress_callback and stations_found < 2:  # Only debug first 2 stations
+                                if stations_found < 2:
+                                    debug_log.write(f"\n*** PLAYER STATION FOUND: {current_station_elem['name']} ***\n")
+                                if progress_callback and stations_found < 2:
                                     progress_callback(f"DEBUG: Entering station {current_station_elem['name']}", stations_found)
 
                     # === NESTED TAG TRACKING ===
                     elif event == 'start' and in_player_station:
                         if elem.tag == 'construction':
                             in_construction = True
+                            if stations_found < 2:
+                                debug_log.write(f"  -> Entered construction section\n")
                             if progress_callback and stations_found < 2:
                                 progress_callback(f"DEBUG: Entered construction section", stations_found)
                         elif elem.tag == 'sequence' and in_construction:
                             in_sequence = True
+                            if stations_found < 2:
+                                debug_log.write(f"  -> Entered sequence section\n")
                             if progress_callback and stations_found < 2:
                                 progress_callback(f"DEBUG: Entered sequence section", stations_found)
                         elif elem.tag == 'trade':
                             in_trade = True
+                            if stations_found < 2:
+                                debug_log.write(f"  -> Entered trade section\n")
                             if progress_callback and stations_found < 2:
                                 progress_callback(f"DEBUG: Entered trade section", stations_found)
                         elif elem.tag == 'offers' and in_trade:
                             in_offers = True
+                            if stations_found < 2:
+                                debug_log.write(f"  -> Entered offers section\n")
                             if progress_callback and stations_found < 2:
                                 progress_callback(f"DEBUG: Entered offers section", stations_found)
                         elif elem.tag == 'production' and in_offers:
                             in_production = True
+                            if stations_found < 2:
+                                debug_log.write(f"  -> Entered production section\n")
                             if progress_callback and stations_found < 2:
                                 progress_callback(f"DEBUG: Entered production section", stations_found)
                         elif elem.tag == 'subordinates':
                             in_subordinates = True
+                            if stations_found < 2:
+                                debug_log.write(f"  -> Entered subordinates section\n")
                             if progress_callback and stations_found < 2:
                                 progress_callback(f"DEBUG: Entered subordinates section", stations_found)
 
@@ -172,6 +201,8 @@ class StreamingDataExtractor:
                         # Production modules in construction sequence
                         if elem.tag == 'entry' and in_sequence:
                             macro = elem.get('macro', '')
+                            if stations_found < 2:
+                                debug_log.write(f"  Entry in sequence: macro={macro}\n")
                             if 'prod_' in macro.lower():
                                 ware_id = self._extract_ware_from_macro(macro)
                                 if ware_id:
@@ -180,6 +211,8 @@ class StreamingDataExtractor:
                                         'ware_id': ware_id,
                                         'index': elem.get('index', '0')
                                     })
+                                    if len(station_production_modules) == 1:
+                                        debug_log.write(f"*** PRODUCTION MODULE FOUND: {ware_id} ***\n")
                                     if progress_callback and len(station_production_modules) == 1:
                                         progress_callback(f"Found production module: {ware_id}", stations_found)
                             elem.clear()
@@ -269,6 +302,8 @@ class StreamingDataExtractor:
                         elem.clear()
 
         except Exception as e:
+            debug_log.write(f"\n*** ERROR: {e} ***\n")
+            debug_log.close()
             if progress_callback:
                 progress_callback(f"Error during parsing: {e}", stations_found)
             raise
@@ -278,8 +313,16 @@ class StreamingDataExtractor:
         empire.player_name = self.player_name
         empire.stations = stations
 
+        debug_log.write(f"\n=== EXTRACTION SUMMARY ===\n")
+        debug_log.write(f"Save timestamp: {self.save_timestamp}\n")
+        debug_log.write(f"Player name: {self.player_name}\n")
+        debug_log.write(f"Stations found: {len(stations)}\n")
+        debug_log.write(f"Total elements processed: {elements_processed}\n")
+        debug_log.close()
+
         if progress_callback:
             progress_callback(f"Extraction complete! Found {len(stations)} stations", len(stations))
+            progress_callback(f"Debug log saved to: /tmp/x4_debug.log", len(stations))
 
         return empire
 
