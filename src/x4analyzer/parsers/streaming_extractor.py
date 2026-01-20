@@ -45,14 +45,20 @@ class StreamingDataExtractor:
         Returns:
             EmpireData object with all extracted information
         """
+        # Create logs directory if it doesn't exist
+        from pathlib import Path
+        log_dir = Path.home() / "x4-production-analyzer" / "logs"
+        log_dir.mkdir(parents=True, exist_ok=True)
+        log_file = log_dir / "x4_debug.log"
+
         # Open debug log file
-        debug_log = open('/tmp/x4_debug.log', 'w')
+        debug_log = open(log_file, 'w')
         debug_log.write("=== X4 Streaming Parser Debug Log ===\n\n")
 
         if progress_callback:
             flavor = random.choice(EXTRACTION_FLAVOR)
             progress_callback(flavor + "...", 0)
-            progress_callback("DEBUG: Writing detailed log to /tmp/x4_debug.log", 0)
+            progress_callback(f"DEBUG: Writing detailed log to {log_file}", 0)
 
         empire = EmpireData()
         stations = []
@@ -322,7 +328,7 @@ class StreamingDataExtractor:
 
         if progress_callback:
             progress_callback(f"Extraction complete! Found {len(stations)} stations", len(stations))
-            progress_callback(f"Debug log saved to: /tmp/x4_debug.log", len(stations))
+            progress_callback(f"Debug log saved to: {log_file}", len(stations))
 
         return empire
 
