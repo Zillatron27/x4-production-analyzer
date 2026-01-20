@@ -53,12 +53,13 @@ class StreamingDataExtractor:
 
         # Open debug log file
         debug_log = open(log_file, 'w')
-        debug_log.write("=== X4 Streaming Parser Debug Log ===\n\n")
+        debug_log.write("=== X4 Streaming Parser Debug Log ===\n")
+        debug_log.write("BUILD: 20260120-03\n\n")
 
         if progress_callback:
             flavor = random.choice(EXTRACTION_FLAVOR)
             progress_callback(flavor + "...", 0)
-            progress_callback(f"DEBUG: Writing detailed log to {log_file}", 0)
+            progress_callback(f"[BUILD 20260120-03] DEBUG LOG: {log_file}", 0)
 
         empire = EmpireData()
         stations = []

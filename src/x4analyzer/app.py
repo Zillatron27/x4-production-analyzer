@@ -131,6 +131,7 @@ class X4Analyzer:
         banner = """╔═══════════════════════════════════════════════════════╗
 ║                                                       ║
 ║     X4 EMPIRE PRODUCTION ANALYZER v1.0                ║
+║                    BUILD 20260120-03                  ║
 ║                                                       ║
 ║     Analyze your production empire and optimize      ║
 ║     resource management in X4: Foundations            ║
