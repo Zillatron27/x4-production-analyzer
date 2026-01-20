@@ -120,11 +120,20 @@ class DataExtractor:
         name = station_elem.get("name", f"Station {station_id}")
         owner = station_elem.get("owner", "unknown")
 
-        # Get sector info
+        # Get sector info - try multiple methods
         sector = "Unknown"
+
+        # Method 1: Direct location element
         sector_elem = station_elem.find("./location")
         if sector_elem is not None:
             sector = sector_elem.get("sector", "Unknown")
+
+        # Method 2: Try to get from parent or zone (if method 1 didn't work)
+        if sector == "Unknown":
+            # The sector might be determined by the parent component structure
+            # For now, we'll try to extract it from the station's connection path
+            # This is a fallback and may need refinement based on actual save structure
+            pass
 
         station = Station(
             station_id=station_id,
@@ -145,63 +154,125 @@ class DataExtractor:
         """Extract production modules from station."""
         modules = []
 
-        # Find all modules/components within the station
-        for module_elem in station_elem.findall(".//connection/component[@class='module']"):
-            module = self._parse_module(module_elem)
-            if module:
-                modules.append(module)
+        # First, extract trade data for the station
+        trade_data = self._extract_trade_data(station_elem)
+
+        # Find all production modules in construction sequence
+        construction = station_elem.find(".//construction/sequence")
+        if construction is not None:
+            for entry in construction.findall("entry"):
+                macro = entry.get("macro", "")
+
+                # Only process production modules
+                if "prod_" not in macro.lower():
+                    continue
+
+                module = self._parse_module(entry, trade_data, macro)
+                if module:
+                    modules.append(module)
 
         return modules
 
-    def _parse_module(self, module_elem: ET.Element) -> Optional[ProductionModule]:
-        """Parse a single module element."""
-        module_id = module_elem.get("code", module_elem.get("id", "unknown"))
-        macro = module_elem.get("macro", "")
+    def _extract_trade_data(self, station_elem: ET.Element) -> dict:
+        """Extract trade data from station."""
+        trade_info = {}
 
-        # Only process production modules
-        if "prod_" not in macro.lower():
-            return None
+        # Find trade offers
+        production_trades = station_elem.findall(".//trade/offers/production/trade")
+
+        for trade in production_trades:
+            ware_id = trade.get("ware", "")
+            if not ware_id:
+                continue
+
+            amount = int(trade.get("amount", 0))
+            desired = int(trade.get("desired", 0))
+            is_seller = trade.get("seller") is not None
+            is_buyer = trade.get("buyer") is not None
+
+            if ware_id not in trade_info:
+                trade_info[ware_id] = {
+                    "outputs": [],
+                    "inputs": []
+                }
+
+            trade_entry = {
+                "amount": amount,
+                "capacity": desired if desired > 0 else amount * 2  # Estimate capacity if not specified
+            }
+
+            if is_seller:
+                trade_info[ware_id]["outputs"].append(trade_entry)
+            elif is_buyer:
+                trade_info[ware_id]["inputs"].append(trade_entry)
+
+        return trade_info
+
+    def _parse_module(self, entry_elem: ET.Element, trade_data: dict, macro: str) -> Optional[ProductionModule]:
+        """Parse a single production module entry."""
+        module_id = entry_elem.get("id", "unknown")
+        index = entry_elem.get("index", "0")
 
         module = ProductionModule(
-            module_id=module_id,
+            module_id=f"{module_id}_{index}",
             macro=macro
         )
 
-        # Extract production info
-        production_elem = module_elem.find(".//production")
-        if production_elem is not None:
-            # Get output ware
-            ware_id = production_elem.get("wares", production_elem.get("ware", ""))
-            if ware_id:
-                module.output_ware = get_ware(ware_id)
+        # Determine output ware from macro name
+        # Extract ware type from macro like "prod_gen_advancedelectronics_macro"
+        ware_id = self._extract_ware_from_macro(macro)
 
-        # Extract storage/trade data
-        cargo_elem = module_elem.find(".//cargo")
-        if cargo_elem is not None:
-            # Parse input and output resources
-            for ware_elem in cargo_elem.findall(".//ware"):
-                ware_id = ware_elem.get("ware", "")
-                amount = int(ware_elem.get("amount", 0))
+        if ware_id:
+            module.output_ware = get_ware(ware_id)
 
-                # Look for capacity in tags or attributes
-                tags = ware_elem.get("tags", "")
-                capacity = 0
+            # Get trade data for this ware
+            if ware_id in trade_data:
+                ware_trade = trade_data[ware_id]
 
-                # Try to find storage capacity
-                storage_elem = cargo_elem.find(f".//storage[@ware='{ware_id}']")
-                if storage_elem is not None:
-                    capacity = int(storage_elem.get("max", 0))
+                # Set output resource
+                if ware_trade["outputs"]:
+                    output_data = ware_trade["outputs"][0]
+                    module.output = TradeResource(
+                        ware=module.output_ware,
+                        amount=output_data["amount"],
+                        capacity=output_data["capacity"]
+                    )
 
-                ware = get_ware(ware_id)
-                resource = TradeResource(ware=ware, amount=amount, capacity=capacity)
-
-                # Determine if input or output
-                if module.output_ware and ware == module.output_ware:
-                    module.output = resource
-                else:
-                    module.inputs.append(resource)
+                # Set input resources from buyer trades
+                # For inputs, we need to find what this production module needs
+                # This is trickier - we'll look for buyer trades and estimate
+                for input_ware_id, input_trade in trade_data.items():
+                    if input_ware_id != ware_id and input_trade["inputs"]:
+                        for input_data in input_trade["inputs"]:
+                            input_ware = get_ware(input_ware_id)
+                            input_resource = TradeResource(
+                                ware=input_ware,
+                                amount=input_data["amount"],
+                                capacity=input_data["capacity"]
+                            )
+                            module.inputs.append(input_resource)
 
         return module
+
+    def _extract_ware_from_macro(self, macro: str) -> str:
+        """Extract ware ID from production module macro name."""
+        # Macro format: prod_gen_advancedelectronics_macro or prod_arg_energycells_01_macro
+        if "prod_" not in macro.lower():
+            return ""
+
+        # Remove common prefixes and suffixes
+        macro = macro.lower()
+        macro = macro.replace("prod_gen_", "")
+        macro = macro.replace("prod_arg_", "")
+        macro = macro.replace("prod_par_", "")
+        macro = macro.replace("prod_tel_", "")
+        macro = macro.replace("prod_", "")
+        macro = macro.replace("_macro", "")
+        macro = macro.replace("_01", "")
+        macro = macro.replace("_02", "")
+        macro = macro.replace("_03", "")
+
+        return macro
 
     def _extract_assigned_ships(self, station_elem: ET.Element, station_id: str) -> List[Ship]:
         """Extract ships assigned to this station."""
