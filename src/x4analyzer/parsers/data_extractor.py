@@ -2,6 +2,7 @@
 
 import xml.etree.ElementTree as ET
 import random
+from datetime import datetime
 from typing import List, Optional, Callable
 from ..models.entities import (
     Station, ProductionModule, Ship, TradeResource, EmpireData
@@ -70,20 +71,43 @@ class DataExtractor:
 
     def _extract_timestamp(self) -> str:
         """Extract save file timestamp."""
-        # Look for save info in XML
+        # Look for save element with Unix timestamp
+        save_elem = self.root.find(".//info/save")
+        if save_elem is not None:
+            timestamp_str = save_elem.get("date", "")
+            if timestamp_str:
+                try:
+                    # Convert Unix timestamp to readable format
+                    timestamp = int(timestamp_str)
+                    dt = datetime.fromtimestamp(timestamp)
+                    return dt.strftime("%Y-%m-%d %H:%M:%S")
+                except (ValueError, OSError):
+                    pass
+
+        # Fallback: try old format
         info = self.root.find(".//info")
         if info is not None:
             save_date = info.get("date", "")
             save_time = info.get("time", "")
             if save_date and save_time:
                 return f"{save_date} {save_time}"
+
         return "Unknown"
 
     def _extract_player_name(self) -> str:
         """Extract player name."""
+        # Try the player element in info first
+        player = self.root.find(".//info/player")
+        if player is not None:
+            name = player.get("name", "")
+            if name:
+                return name
+
+        # Fallback: try player element elsewhere
         player = self.root.find(".//player")
         if player is not None:
             return player.get("name", "Unknown")
+
         return "Unknown"
 
     def _build_ship_lookup(self):
