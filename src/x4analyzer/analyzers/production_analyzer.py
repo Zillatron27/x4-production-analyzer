@@ -1,6 +1,6 @@
 """Production analysis and statistics."""
 
-from typing import Dict, List, Tuple
+from typing import Dict, List, Tuple, Optional
 from collections import defaultdict
 from ..models.entities import (
     EmpireData, Station, ProductionModule, Ware, WareCategory, TradeResource
@@ -22,6 +22,11 @@ class ProductionStats:
         self.total_consumption_demand = 0  # Sum of consumption from all stations
         self.consuming_stations: Dict[str, int] = {}  # station_name -> demand amount
         self.producing_stations: Dict[str, int] = {}  # station_name -> module count
+
+        # True production rates (from game data)
+        self.production_rate_per_hour: float = 0.0  # Units per hour
+        self.consumption_rate_per_hour: float = 0.0  # Units per hour
+        self.has_rate_data: bool = False  # Whether we have actual rate data
 
     @property
     def capacity_percent(self) -> float:
