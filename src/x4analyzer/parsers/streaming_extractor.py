@@ -86,14 +86,23 @@ class StreamingDataExtractor:
 
         try:
             # Try to open as gzipped file first, fall back to plain XML
-            try:
+            file_handle = None
+            is_gzipped = True
+
+            # Check if file is gzipped by reading the magic number
+            with open(self.file_path, 'rb') as f:
+                magic = f.read(2)
+                if magic != b'\x1f\x8b':  # gzip magic number
+                    is_gzipped = False
+
+            if is_gzipped:
                 file_handle = gzip.open(self.file_path, 'rb')
                 if progress_callback:
                     progress_callback("Streaming gzipped XML data...", 0)
-            except gzip.BadGzipFile:
-                if progress_callback:
-                    progress_callback("Not gzipped, reading as plain XML...", 0)
+            else:
                 file_handle = open(self.file_path, 'rb')
+                if progress_callback:
+                    progress_callback("Streaming plain XML data...", 0)
 
             with file_handle:
                 context = ET.iterparse(file_handle, events=('start', 'end'))
