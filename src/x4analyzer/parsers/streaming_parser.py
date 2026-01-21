@@ -173,13 +173,12 @@ class StreamingParser:
                         if progress_callback and station_count % 5 == 0:
                             progress_callback(f"Found {station_count} stations...", station_count)
 
-                    # Found a ship - X4 uses class="ship_s", "ship_m", "ship_l", "ship_xl"
-                    comp_macro = elem.get('macro', '').lower()
-                    is_ship = (comp_class.startswith('ship_') or
-                               comp_class == 'ship' or
-                               'ship_' in comp_macro)
+                    # Found a ship - X4 uses class="ship_xs", "ship_s", "ship_m", "ship_l", "ship_xl"
+                    # Exclude dockingbay, dockarea, and other station modules
+                    valid_ship_classes = ('ship_xs', 'ship_s', 'ship_m', 'ship_l', 'ship_xl')
+                    is_ship = comp_class in valid_ship_classes
 
-                    if is_ship and not comp_class.startswith('station'):
+                    if is_ship:
                         ship = ParsedShip(
                             ship_id=comp_id,
                             name=elem.get('name', f'Ship {comp_id}'),
