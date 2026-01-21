@@ -300,23 +300,36 @@ class StreamingParser:
                 # Process production module entries
                 elif tag == 'entry' and self._in_player_station:
                     macro = elem.get('macro', '')
-                    if 'prod_' in macro.lower():
-                        station = self._stations.get(self._current_station_id)
-                        if station:
+                    macro_lower = macro.lower()
+                    station = self._stations.get(self._current_station_id)
+
+                    if station:
+                        # Track production modules
+                        if 'prod_' in macro_lower:
                             station.modules.append(macro)
-                    # Check for station type indicators
-                    elif self._current_station_id:
-                        station = self._stations.get(self._current_station_id)
-                        if station:
-                            macro_lower = macro.lower()
-                            if 'shipyard' in macro_lower:
+
+                        # Detect station type from buildmodule macros
+                        # Priority: shipyard > wharf > equipmentdock
+                        # buildmodule_*_ships_l_* or ships_xl_* = Shipyard (builds L/XL ships)
+                        # buildmodule_*_ships_m_* = Wharf (builds M class ships)
+                        # buildmodule_*_equip_* = Equipment dock
+                        if 'buildmodule' in macro_lower:
+                            if '_ships_l_' in macro_lower or '_ships_xl_' in macro_lower:
+                                # Shipyard - highest priority, always set
                                 station.station_type = 'shipyard'
-                            elif 'wharf' in macro_lower:
-                                station.station_type = 'wharf'
-                            elif 'equipmentdock' in macro_lower:
-                                station.station_type = 'equipmentdock'
-                            elif 'defence' in macro_lower or 'pier' in macro_lower:
-                                station.station_type = 'defence'
+                            elif '_ships_m_' in macro_lower:
+                                # Wharf - set only if not already shipyard
+                                if station.station_type != 'shipyard':
+                                    station.station_type = 'wharf'
+                            elif '_equip_' in macro_lower:
+                                # Equipment dock - set only if not already wharf or shipyard
+                                if station.station_type not in ('wharf', 'shipyard'):
+                                    station.station_type = 'equipmentdock'
+
+                        # Track if station has defence modules (for later classification)
+                        elif 'defence_' in macro_lower:
+                            if not hasattr(station, '_has_defence'):
+                                station._has_defence = True
 
                 # Process trade data
                 elif tag == 'trade' and self._in_player_station:
@@ -407,12 +420,28 @@ class StreamingParser:
         assigned_ship_ids = set()
 
         for station_id, parsed in self._stations.items():
+            # Finalize station type:
+            # - If buildmodule detected wharf/shipyard/equipmentdock, keep that
+            # - If has production modules, it's a production station
+            # - If has defence modules but no production, it's a defence platform
+            # - Otherwise keep the default (production)
+            final_station_type = parsed.station_type
+            if final_station_type == 'production':  # Default, may need refinement
+                has_production = len(parsed.modules) > 0
+                has_defence = getattr(parsed, '_has_defence', False)
+
+                if has_production:
+                    final_station_type = 'production'
+                elif has_defence:
+                    final_station_type = 'defence'
+                # else keep as 'production' (might be a trade station or incomplete)
+
             station = Station(
                 station_id=parsed.station_id,
                 name=parsed.name,
                 owner=parsed.owner,
                 sector=parsed.sector,
-                station_type=parsed.station_type
+                station_type=final_station_type
             )
 
             # Convert modules
