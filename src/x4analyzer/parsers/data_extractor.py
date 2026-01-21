@@ -146,33 +146,24 @@ class DataExtractor:
 
     def _build_ship_lookup(self):
         """Build a lookup table of all ships for quick access."""
-        # Find all ships in the universe - try multiple detection methods
+        # Find all ships in the universe
+        # X4 uses class="ship_s", "ship_m", "ship_l", "ship_xl" for ships
         ship_count = 0
 
-        # Method 1: class='ship'
-        for ship_elem in self.root.findall(".//component[@class='ship']"):
-            ship_id = ship_elem.get("code", ship_elem.get("id", ""))
-            if ship_id and ship_id not in self.ship_lookup:
-                self.ship_lookup[ship_id] = ship_elem
-                ship_count += 1
-
-        # Method 2: macro contains 'ship_' (common X4 naming)
         for ship_elem in self.root.findall(".//component"):
+            comp_class = ship_elem.get("class", "")
             macro = ship_elem.get("macro", "").lower()
-            if "ship_" in macro:
+
+            # Check if this is a ship (class starts with 'ship_' or macro contains 'ship_')
+            is_ship = comp_class.startswith("ship_") or "ship_" in macro
+
+            if is_ship:
                 ship_id = ship_elem.get("code", ship_elem.get("id", ""))
                 if ship_id and ship_id not in self.ship_lookup:
                     self.ship_lookup[ship_id] = ship_elem
                     ship_count += 1
 
-        # Method 3: Look for <ship> elements directly
-        for ship_elem in self.root.findall(".//ship"):
-            ship_id = ship_elem.get("code", ship_elem.get("id", ""))
-            if ship_id and ship_id not in self.ship_lookup:
-                self.ship_lookup[ship_id] = ship_elem
-                ship_count += 1
-
-        logger.info(f"Ship detection: found {ship_count} ships via multiple methods")
+        logger.info(f"Ship detection: found {ship_count} ships")
 
     def _extract_stations(self, progress_callback: Optional[Callable[[str, int], None]] = None) -> List[Station]:
         """Extract all player-owned stations."""
@@ -462,15 +453,31 @@ class DataExtractor:
         ship_id = ship_elem.get("code", ship_elem.get("id", "unknown"))
         name = ship_elem.get("name", f"Ship {ship_id}")
         ship_class = ship_elem.get("macro", "unknown")
+        macro_lower = ship_class.lower()
 
         # Determine ship type from purpose or macro
-        ship_type = "unknown"
         purpose = ship_elem.get("purpose", "").lower()
 
-        if "trade" in purpose or "trade" in ship_class.lower():
+        # Check purpose first (most reliable)
+        if "trade" in purpose:
             ship_type = "trader"
-        elif "mine" in purpose or "mining" in ship_class.lower():
+        elif "mine" in purpose:
             ship_type = "miner"
+        elif "build" in purpose or "moveto" in purpose:
+            ship_type = "builder"
+        # Check macro for ship role hints
+        elif "trans" in macro_lower or "freighter" in macro_lower or "hauler" in macro_lower:
+            ship_type = "trader"
+        elif "miner" in macro_lower or "mining" in macro_lower:
+            ship_type = "miner"
+        elif "builder" in macro_lower or "construct" in macro_lower:
+            ship_type = "builder"
+        elif "fighter" in macro_lower or "corvette" in macro_lower or "frigate" in macro_lower:
+            ship_type = "combat"
+        elif "carrier" in macro_lower or "destroyer" in macro_lower or "battleship" in macro_lower:
+            ship_type = "combat"
+        else:
+            ship_type = "other"
 
         # Get cargo capacity
         cargo_capacity = 0
