@@ -80,6 +80,8 @@ class Station:
     sector: str = "Unknown"
     modules: List[ProductionModule] = field(default_factory=list)
     assigned_ships: List[Ship] = field(default_factory=list)
+    station_type: str = "production"  # production, wharf, shipyard, equipmentdock
+    input_demands: Dict[str, int] = field(default_factory=dict)  # ware_id -> demand amount
 
     @property
     def production_modules(self) -> List[ProductionModule]:

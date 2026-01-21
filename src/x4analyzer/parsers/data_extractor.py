@@ -159,11 +159,15 @@ class DataExtractor:
             # This is a fallback and may need refinement based on actual save structure
             pass
 
+        # Detect station type from modules
+        station_type = self._detect_station_type(station_elem)
+
         station = Station(
             station_id=station_id,
             name=name,
             owner=owner,
-            sector=sector
+            sector=sector,
+            station_type=station_type
         )
 
         # Extract modules
@@ -172,7 +176,58 @@ class DataExtractor:
         # Extract assigned ships
         station.assigned_ships = self._extract_assigned_ships(station_elem, station_id)
 
+        # Extract input demands (for all stations, especially wharfs/shipyards)
+        station.input_demands = self._extract_station_demands(station_elem)
+
         return station
+
+    def _detect_station_type(self, station_elem: ET.Element) -> str:
+        """Detect station type from module macros."""
+        construction = station_elem.find(".//construction/sequence")
+        if construction is None:
+            return "production"
+
+        for entry in construction.findall("entry"):
+            macro = entry.get("macro", "").lower()
+            # Check for ship construction facilities
+            if "wharf" in macro or "shipyard" in macro:
+                if "shipyard" in macro:
+                    return "shipyard"
+                return "wharf"
+            elif "equipmentdock" in macro or "equipment" in macro:
+                return "equipmentdock"
+            elif "defence" in macro or "pier" in macro:
+                return "defence"
+
+        return "production"
+
+    def _extract_station_demands(self, station_elem: ET.Element) -> dict:
+        """Extract all input demands from station trade data."""
+        demands = {}
+
+        # Find buyer trades (inputs/consumption)
+        production_trades = station_elem.findall(".//trade/offers/production/trade")
+
+        for trade in production_trades:
+            # Only process buyer trades (consumption)
+            if trade.get("buyer") is None:
+                continue
+
+            ware_id = trade.get("ware", "")
+            if not ware_id:
+                continue
+
+            # Use 'desired' amount as demand, fallback to 'amount'
+            desired = int(trade.get("desired", 0))
+            amount = int(trade.get("amount", 0))
+            demand = desired if desired > 0 else amount
+
+            if demand > 0:
+                if ware_id not in demands:
+                    demands[ware_id] = 0
+                demands[ware_id] += demand
+
+        return demands
 
     def _extract_modules(self, station_elem: ET.Element) -> List[ProductionModule]:
         """Extract production modules from station."""

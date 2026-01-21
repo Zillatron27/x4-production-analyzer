@@ -39,59 +39,106 @@ class ViewRenderer:
             self._wait_for_enter()
             return
 
-        # Display current production
+        # Display current production with supply/demand
         self.console.print(f"\n[bold]Production: {stats.ware.name}[/bold]")
-        self.console.print(f"  Current modules: [green]{stats.module_count}[/green]")
-        self.console.print(f"  Total stock: {stats.total_stock:,}")
-        self.console.print(f"  Total capacity: {stats.total_capacity:,}")
-        self.console.print(f"  Utilization: {stats.capacity_percent:.1f}%\n")
+        self.console.print(f"  Production modules: [green]{stats.module_count}[/green]")
+        self.console.print(f"  Current stock: {stats.total_stock:,}")
+        self.console.print(f"  Storage capacity: {stats.total_capacity:,}")
+        self.console.print()
+
+        # Supply/Demand section
+        self.console.print("[bold yellow]Supply vs Demand:[/bold yellow]")
+        self.console.print(f"  Production output: {stats.total_production_output:,} (estimated capacity)")
+        self.console.print(f"  Consumption demand: {stats.total_consumption_demand:,} (from internal stations)")
+
+        # Color-code supply status
+        status = stats.supply_status
+        if status == "Shortage":
+            self.console.print(f"  Supply status: [red]{status}[/red] ({stats.production_utilization:.0f}% demand/production)")
+        elif status == "Surplus":
+            self.console.print(f"  Supply status: [yellow]{status}[/yellow] ({stats.production_utilization:.0f}% demand/production)")
+        elif status == "Balanced":
+            self.console.print(f"  Supply status: [green]{status}[/green] ({stats.production_utilization:.0f}% demand/production)")
+        else:
+            self.console.print(f"  Supply status: [dim]{status}[/dim]")
+        self.console.print()
+
+        # Producing stations
+        if stats.producing_stations:
+            self.console.print("[bold yellow]Producing Stations:[/bold yellow]")
+            for station_name, module_count in sorted(stats.producing_stations.items(), key=lambda x: -x[1]):
+                self.console.print(f"  - {station_name}: [green]{module_count} modules[/green]")
+            self.console.print()
+
+        # Consuming stations
+        if stats.consuming_stations:
+            self.console.print("[bold yellow]Consuming Stations:[/bold yellow]")
+            for station_name, demand in sorted(stats.consuming_stations.items(), key=lambda x: -x[1]):
+                self.console.print(f"  - {station_name}: [cyan]{demand:,} demand[/cyan]")
+            self.console.print()
 
         # Analyze dependencies
         deps = self.analyzer.analyze_dependencies(query)
 
         # Display input requirements
         if deps["inputs"]:
-            self.console.print("[bold yellow]Input Requirements:[/bold yellow]")
+            self.console.print("[bold yellow]Input Requirements (for production):[/bold yellow]")
             table = Table(show_header=True, box=None)
             table.add_column("Input Ware", style="cyan")
             table.add_column("Modules", justify="right", style="green")
-            table.add_column("Capacity", justify="right")
+            table.add_column("Supply Status", justify="right")
 
             for input_stats in deps["inputs"]:
+                status_color = "red" if input_stats.supply_status == "Shortage" else \
+                               "yellow" if input_stats.supply_status == "Surplus" else \
+                               "green" if input_stats.supply_status == "Balanced" else "dim"
                 table.add_row(
                     input_stats.ware.name,
                     str(input_stats.module_count),
-                    f"{input_stats.capacity_percent:.1f}%"
+                    f"[{status_color}]{input_stats.supply_status}[/{status_color}]"
                 )
 
             self.console.print(table)
             self.console.print()
 
-            # Check for bottlenecks
-            bottlenecks = [s for s in deps["inputs"] if s.capacity_percent < 50]
-            if bottlenecks:
-                self.console.print("[bold red]Bottleneck Warnings:[/bold red]")
-                for bn in bottlenecks:
+            # Check for shortages in inputs
+            shortages = [s for s in deps["inputs"] if s.supply_status == "Shortage"]
+            if shortages:
+                self.console.print("[bold red]Input Shortages:[/bold red]")
+                for sh in shortages:
                     self.console.print(
-                        f"  - {bn.ware.name}: Low capacity ({bn.capacity_percent:.1f}%)"
+                        f"  - {sh.ware.name}: [red]Demand at {sh.production_utilization:.0f}% of production[/red]"
                     )
                 self.console.print()
 
-        # Display consumers
+        # Display what this ware is used to produce
         if deps["consumers"]:
-            self.console.print(f"[bold yellow]Used By:[/bold yellow]")
+            # Deduplicate consumers
+            unique_consumers = {}
             for consumer in deps["consumers"]:
-                self.console.print(f"  - {consumer.ware.name}")
+                if consumer.ware.ware_id not in unique_consumers:
+                    unique_consumers[consumer.ware.ware_id] = consumer
+
+            self.console.print(f"[bold yellow]Used To Produce:[/bold yellow]")
+            for consumer in unique_consumers.values():
+                self.console.print(f"  - {consumer.ware.name} ({consumer.module_count} modules)")
             self.console.print()
 
         # Recommendations
-        if deps["inputs"]:
-            low_inputs = [s for s in deps["inputs"] if s.capacity_percent < 70]
-            if low_inputs:
-                self.console.print("[bold green]Recommended Expansions:[/bold green]")
-                for inp in low_inputs:
-                    self.console.print(f"  - Expand {inp.ware.name} production")
-                self.console.print()
+        if stats.supply_status == "Shortage":
+            self.console.print("[bold red]RECOMMENDATION:[/bold red]")
+            shortage_percent = stats.production_utilization - 100
+            self.console.print(f"  Demand exceeds production by {shortage_percent:.0f}%")
+            # Estimate modules needed
+            if stats.module_count > 0:
+                modules_needed = int(stats.module_count * (shortage_percent / 100)) + 1
+                self.console.print(f"  Consider adding ~{modules_needed} more production modules")
+            self.console.print()
+        elif stats.supply_status == "Surplus" and stats.production_utilization < 50:
+            self.console.print("[bold yellow]NOTE:[/bold yellow]")
+            self.console.print(f"  Production significantly exceeds internal demand")
+            self.console.print(f"  Excess may be sold to NPC factions for profit")
+            self.console.print()
 
         self._wait_for_enter()
 
@@ -197,22 +244,52 @@ class ViewRenderer:
         self.console.print(f"  Miners: [cyan]{summary['miners']}[/cyan]")
         self.console.print(f"  Total Cargo Capacity: {summary['total_cargo_capacity']:,}\n")
 
+        # Station type breakdown
+        stations_by_type = self.analyzer.get_stations_by_type()
+        self.console.print("[bold]Stations by Type:[/bold]")
+        type_names = {
+            "production": "Production Facilities",
+            "wharf": "Wharfs",
+            "shipyard": "Shipyards",
+            "equipmentdock": "Equipment Docks",
+            "defence": "Defence Platforms"
+        }
+        for station_type, stations in sorted(stations_by_type.items()):
+            type_display = type_names.get(station_type, station_type.title())
+            self.console.print(f"  {type_display}: [green]{len(stations)}[/green]")
+        self.console.print()
+
+        # Ship-building facilities consumption
+        ship_builders = self.analyzer.get_ship_building_stations()
+        if ship_builders:
+            self.console.print("[bold yellow]Ship-Building Facility Consumption:[/bold yellow]")
+            for station in ship_builders:
+                self.console.print(f"  [cyan]{station.name}[/cyan] ({station.station_type})")
+                if station.input_demands:
+                    for ware_id, demand in sorted(station.input_demands.items(), key=lambda x: -x[1])[:5]:
+                        from ..models.ware_database import get_ware
+                        ware = get_ware(ware_id)
+                        self.console.print(f"    - {ware.name}: {demand:,} demand")
+                else:
+                    self.console.print(f"    [dim]No active consumption data[/dim]")
+            self.console.print()
+
         # Per-station breakdown
-        self.console.print("[bold]Station Assignments:[/bold]")
+        self.console.print("[bold]Station Logistics Assignments:[/bold]")
         table = Table(show_header=True, box=None)
         table.add_column("Station", style="cyan")
+        table.add_column("Type", style="yellow")
         table.add_column("Traders", justify="right", style="green")
         table.add_column("Miners", justify="right", style="green")
-        table.add_column("Total Ships", justify="right")
-        table.add_column("Cargo Capacity", justify="right")
+        table.add_column("Cargo", justify="right")
 
         for station in self.empire.stations:
             if station.assigned_ships:
                 table.add_row(
-                    station.name,
+                    station.name[:35] + "..." if len(station.name) > 38 else station.name,
+                    station.station_type[:8],
                     str(len(station.traders)),
                     str(len(station.miners)),
-                    str(len(station.assigned_ships)),
                     f"{station.total_cargo_capacity:,}"
                 )
 
@@ -276,8 +353,9 @@ class ViewRenderer:
         self.console.print("[bold cyan]EXPORT REPORT[/bold cyan]\n")
 
         self.console.print("Select export format:")
-        self.console.print("  [1] CSV")
-        self.console.print("  [2] JSON")
+        self.console.print("  [1] CSV (spreadsheet compatible)")
+        self.console.print("  [2] JSON (for scripts/tools)")
+        self.console.print("  [3] Text (human readable report)")
         self.console.print()
 
         choice = self.console.input("Enter choice: ").strip()
@@ -286,6 +364,8 @@ class ViewRenderer:
             self._export_csv()
         elif choice == "2":
             self._export_json()
+        elif choice == "3":
+            self._export_text()
         else:
             self.console.print("[red]Invalid choice[/red]")
             self._wait_for_enter()
@@ -302,7 +382,11 @@ class ViewRenderer:
         try:
             with open(filename, 'w', newline='') as f:
                 writer = csv.writer(f)
-                writer.writerow(["Ware", "Category", "Modules", "Stock", "Capacity", "Utilization %"])
+                writer.writerow([
+                    "Ware", "Category", "Modules", "Stock", "Capacity",
+                    "Stock %", "Production Output", "Consumption Demand",
+                    "Supply/Demand %", "Supply Status"
+                ])
 
                 for stats in self.analyzer.get_all_production_stats():
                     writer.writerow([
@@ -311,7 +395,11 @@ class ViewRenderer:
                         stats.module_count,
                         stats.total_stock,
                         stats.total_capacity,
-                        f"{stats.capacity_percent:.2f}"
+                        f"{stats.capacity_percent:.2f}",
+                        stats.total_production_output,
+                        stats.total_consumption_demand,
+                        f"{stats.production_utilization:.2f}",
+                        stats.supply_status
                     ])
 
             self.console.print(f"[green]Report exported to {filename}[/green]")
@@ -330,14 +418,19 @@ class ViewRenderer:
             filename += ".json"
 
         try:
+            # Logistics summary
+            logistics = self.analyzer.get_logistics_summary()
+
             data = {
                 "empire": {
                     "player": self.empire.player_name,
                     "save_timestamp": self.empire.save_timestamp,
                     "total_stations": len(self.empire.stations),
-                    "total_modules": self.empire.total_production_modules
+                    "total_modules": self.empire.total_production_modules,
+                    "logistics": logistics
                 },
-                "production": []
+                "production": [],
+                "stations": []
             }
 
             for stats in self.analyzer.get_all_production_stats():
@@ -348,11 +441,143 @@ class ViewRenderer:
                     "module_count": stats.module_count,
                     "total_stock": stats.total_stock,
                     "total_capacity": stats.total_capacity,
-                    "capacity_percent": round(stats.capacity_percent, 2)
+                    "capacity_percent": round(stats.capacity_percent, 2),
+                    "production_output": stats.total_production_output,
+                    "consumption_demand": stats.total_consumption_demand,
+                    "production_utilization": round(stats.production_utilization, 2),
+                    "supply_status": stats.supply_status,
+                    "producing_stations": stats.producing_stations,
+                    "consuming_stations": stats.consuming_stations
                 })
+
+            for station in self.empire.stations:
+                station_data = {
+                    "station_id": station.station_id,
+                    "name": station.name,
+                    "sector": station.sector,
+                    "station_type": station.station_type,
+                    "production_modules": len(station.production_modules),
+                    "products": [w.name for w in station.unique_products],
+                    "assigned_ships": len(station.assigned_ships),
+                    "traders": len(station.traders),
+                    "miners": len(station.miners),
+                    "cargo_capacity": station.total_cargo_capacity,
+                    "input_demands": station.input_demands
+                }
+                data["stations"].append(station_data)
 
             with open(filename, 'w') as f:
                 json.dump(data, f, indent=2)
+
+            self.console.print(f"[green]Report exported to {filename}[/green]")
+        except Exception as e:
+            self.console.print(f"[red]Export failed: {e}[/red]")
+
+        self._wait_for_enter()
+
+    def _export_text(self):
+        """Export to human-readable text format."""
+        filename = self.console.input("Enter filename (default: empire_report.txt): ").strip()
+        if not filename:
+            filename = "empire_report.txt"
+
+        if not filename.endswith(".txt"):
+            filename += ".txt"
+
+        try:
+            with open(filename, 'w') as f:
+                # Header
+                f.write("=" * 60 + "\n")
+                f.write("X4 EMPIRE PRODUCTION REPORT\n")
+                f.write("=" * 60 + "\n\n")
+
+                f.write(f"Player: {self.empire.player_name}\n")
+                f.write(f"Save Time: {self.empire.save_timestamp}\n")
+                f.write(f"Total Stations: {len(self.empire.stations)}\n")
+                f.write(f"Total Production Modules: {self.empire.total_production_modules}\n\n")
+
+                # Production Summary
+                f.write("-" * 60 + "\n")
+                f.write("PRODUCTION SUMMARY\n")
+                f.write("-" * 60 + "\n\n")
+
+                from ..models.entities import WareCategory
+                by_category = self.analyzer.get_production_by_category()
+
+                category_order = [
+                    WareCategory.SHIP_COMPONENTS,
+                    WareCategory.ADVANCED_MATERIALS,
+                    WareCategory.INTERMEDIATE,
+                    WareCategory.BASIC,
+                    WareCategory.UNKNOWN
+                ]
+
+                for category in category_order:
+                    if category not in by_category or not by_category[category]:
+                        continue
+
+                    f.write(f"\n{category.value}:\n")
+                    f.write("-" * 40 + "\n")
+                    f.write(f"{'Ware':<25} {'Modules':>8} {'Stock':>10} {'Status':>12}\n")
+                    f.write("-" * 40 + "\n")
+
+                    for stats in by_category[category]:
+                        f.write(f"{stats.ware.name:<25} {stats.module_count:>8} "
+                               f"{stats.total_stock:>10,} {stats.supply_status:>12}\n")
+
+                # Supply/Demand Analysis
+                f.write("\n" + "-" * 60 + "\n")
+                f.write("SUPPLY/DEMAND ANALYSIS\n")
+                f.write("-" * 60 + "\n\n")
+
+                shortages = self.analyzer.get_supply_shortages()
+                if shortages:
+                    f.write("SHORTAGES (demand > production):\n")
+                    for stats in shortages:
+                        f.write(f"  - {stats.ware.name}: {stats.production_utilization:.0f}% "
+                               f"demand vs production\n")
+                    f.write("\n")
+
+                surplus = self.analyzer.get_supply_surplus()
+                if surplus:
+                    f.write("SURPLUS (production > demand):\n")
+                    for stats in surplus[:10]:  # Top 10
+                        f.write(f"  - {stats.ware.name}: {stats.production_utilization:.0f}% "
+                               f"demand vs production\n")
+                    f.write("\n")
+
+                # Station List
+                f.write("-" * 60 + "\n")
+                f.write("STATION LIST\n")
+                f.write("-" * 60 + "\n\n")
+
+                for station in sorted(self.empire.stations, key=lambda s: s.name):
+                    f.write(f"{station.name}\n")
+                    f.write(f"  Type: {station.station_type}\n")
+                    f.write(f"  Sector: {station.sector}\n")
+                    f.write(f"  Production Modules: {len(station.production_modules)}\n")
+                    f.write(f"  Assigned Ships: {len(station.assigned_ships)} "
+                           f"({len(station.traders)} traders, {len(station.miners)} miners)\n")
+
+                    if station.unique_products:
+                        products = ", ".join(w.name for w in station.unique_products)
+                        f.write(f"  Products: {products}\n")
+                    f.write("\n")
+
+                # Logistics Summary
+                f.write("-" * 60 + "\n")
+                f.write("LOGISTICS SUMMARY\n")
+                f.write("-" * 60 + "\n\n")
+
+                summary = self.analyzer.get_logistics_summary()
+                f.write(f"Total Ships: {summary['total_ships']}\n")
+                f.write(f"Traders: {summary['traders']}\n")
+                f.write(f"Miners: {summary['miners']}\n")
+                f.write(f"Total Cargo Capacity: {summary['total_cargo_capacity']:,}\n\n")
+
+                f.write("=" * 60 + "\n")
+                f.write("END OF REPORT\n")
+                f.write("=" * 60 + "\n")
 
             self.console.print(f"[green]Report exported to {filename}[/green]")
         except Exception as e:

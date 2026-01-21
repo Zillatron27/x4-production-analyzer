@@ -17,14 +17,48 @@ class ProductionStats:
         self.total_capacity = 0
         self.modules: List[ProductionModule] = []
 
+        # Supply/Demand tracking
+        self.total_production_output = 0  # Sum of production capacity
+        self.total_consumption_demand = 0  # Sum of consumption from all stations
+        self.consuming_stations: Dict[str, int] = {}  # station_name -> demand amount
+        self.producing_stations: Dict[str, int] = {}  # station_name -> module count
+
     @property
     def capacity_percent(self) -> float:
-        """Calculate overall capacity utilization."""
+        """Calculate overall stock vs capacity utilization (storage fill level)."""
         if self.total_capacity == 0:
             return 0.0
         return (self.total_stock / self.total_capacity) * 100
 
-    def add_module(self, module: ProductionModule):
+    @property
+    def production_utilization(self) -> float:
+        """Calculate consumption vs production utilization (supply/demand balance)."""
+        if self.total_production_output == 0:
+            return 0.0
+        return (self.total_consumption_demand / self.total_production_output) * 100
+
+    @property
+    def supply_status(self) -> str:
+        """Get supply status: Surplus, Balanced, or Shortage."""
+        # If we have consumption but no production, that's a shortage
+        if self.total_consumption_demand > 0 and self.total_production_output == 0:
+            return "Shortage"
+
+        # If no consumption, check if we're producing (surplus) or not tracking
+        if self.total_consumption_demand == 0:
+            if self.total_production_output > 0:
+                return "Surplus"  # Producing but no internal demand
+            return "No Demand"
+
+        util = self.production_utilization
+        if util < 80:
+            return "Surplus"
+        elif util <= 120:
+            return "Balanced"
+        else:
+            return "Shortage"
+
+    def add_module(self, module: ProductionModule, station_name: str = "Unknown"):
         """Add a module to the stats."""
         self.module_count += 1
         self.modules.append(module)
@@ -32,6 +66,24 @@ class ProductionStats:
         if module.output:
             self.total_stock += module.output.amount
             self.total_capacity += module.output.capacity
+            # Estimate production output from capacity (or use stock * 2 as estimate)
+            production_estimate = module.output.capacity if module.output.capacity > 0 else 10000
+            self.total_production_output += production_estimate
+        else:
+            # Module with no trade data - estimate default production
+            self.total_production_output += 10000
+
+        # Track producing station
+        if station_name not in self.producing_stations:
+            self.producing_stations[station_name] = 0
+        self.producing_stations[station_name] += 1
+
+    def add_consumption(self, station_name: str, demand_amount: int):
+        """Add consumption demand from a station."""
+        self.total_consumption_demand += demand_amount
+        if station_name not in self.consuming_stations:
+            self.consuming_stations[station_name] = 0
+        self.consuming_stations[station_name] += demand_amount
 
 
 class ProductionAnalyzer:
@@ -44,14 +96,69 @@ class ProductionAnalyzer:
 
     def _analyze(self):
         """Perform initial analysis of production data."""
-        # Build production statistics
+        # First pass: Build production statistics
         for station in self.empire.stations:
             for module in station.production_modules:
                 if module.output_ware:
                     if module.output_ware not in self._production_stats:
                         self._production_stats[module.output_ware] = ProductionStats(module.output_ware)
 
-                    self._production_stats[module.output_ware].add_module(module)
+                    self._production_stats[module.output_ware].add_module(module, station.name)
+
+        # Second pass: Track consumption demand from all stations
+        self._analyze_consumption()
+
+    def _analyze_consumption(self):
+        """Analyze consumption demand across all stations."""
+        from ..models.ware_database import get_ware
+
+        for station in self.empire.stations:
+            # Collect all inputs from all modules at this station
+            station_inputs: Dict[str, int] = {}  # ware_id -> total demand
+
+            # Method 1: Get inputs from production modules
+            for module in station.production_modules:
+                for input_res in module.inputs:
+                    ware_id = input_res.ware.ware_id
+                    # Use capacity as demand (desired amount)
+                    demand = input_res.capacity if input_res.capacity > 0 else input_res.amount
+                    if ware_id not in station_inputs:
+                        station_inputs[ware_id] = 0
+                    station_inputs[ware_id] += demand
+
+            # Method 2: Get inputs from station's direct trade data
+            # This captures wharf/shipyard/equipmentdock consumption
+            for ware_id, demand in station.input_demands.items():
+                if ware_id not in station_inputs:
+                    station_inputs[ware_id] = 0
+                station_inputs[ware_id] = max(station_inputs[ware_id], demand)
+
+            # Add consumption to production stats for each input ware
+            for ware_id, demand in station_inputs.items():
+                ware = get_ware(ware_id)
+                if ware in self._production_stats:
+                    self._production_stats[ware].add_consumption(station.name, demand)
+                elif station.station_type in ("wharf", "shipyard", "equipmentdock"):
+                    # Create production stats for wares consumed by wharfs/shipyards
+                    # even if we don't produce them (shows demand exists)
+                    self._production_stats[ware] = ProductionStats(ware)
+                    self._production_stats[ware].add_consumption(station.name, demand)
+
+    def get_supply_shortages(self) -> List[ProductionStats]:
+        """Get wares with supply shortages (demand exceeds production)."""
+        shortages = []
+        for stats in self._production_stats.values():
+            if stats.supply_status == "Shortage":
+                shortages.append(stats)
+        return sorted(shortages, key=lambda s: s.production_utilization, reverse=True)
+
+    def get_supply_surplus(self) -> List[ProductionStats]:
+        """Get wares with surplus production."""
+        surplus = []
+        for stats in self._production_stats.values():
+            if stats.supply_status == "Surplus":
+                surplus.append(stats)
+        return sorted(surplus, key=lambda s: s.production_utilization)
 
     def get_production_by_category(self) -> Dict[WareCategory, List[ProductionStats]]:
         """Group production stats by ware category."""
@@ -173,3 +280,18 @@ class ProductionAnalyzer:
                 results.append(stats)
 
         return sorted(results, key=lambda s: s.module_count, reverse=True)
+
+    def get_ship_building_stations(self) -> List[Station]:
+        """Get wharfs, shipyards, and equipment docks."""
+        ship_builders = []
+        for station in self.empire.stations:
+            if station.station_type in ("wharf", "shipyard", "equipmentdock"):
+                ship_builders.append(station)
+        return ship_builders
+
+    def get_stations_by_type(self) -> Dict[str, List[Station]]:
+        """Group stations by type."""
+        by_type = defaultdict(list)
+        for station in self.empire.stations:
+            by_type[station.station_type].append(station)
+        return dict(by_type)
