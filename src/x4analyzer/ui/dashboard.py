@@ -76,19 +76,30 @@ class Dashboard:
         table.add_column("Ware", style="cyan")
         table.add_column("Modules", justify="right", style="green")
         table.add_column("Stock", justify="right")
-        table.add_column("Capacity", justify="right")
-        table.add_column("Utilization", justify="left")
+        table.add_column("Supply/Demand", justify="left")
+        table.add_column("Status", justify="left")
 
         for stats in stats_list:
-            # Create capacity bar
-            capacity_bar = self._create_capacity_bar(stats.capacity_percent)
+            # Create utilization bar based on supply vs demand
+            utilization_bar = self._create_utilization_bar(stats.production_utilization)
+
+            # Color-code supply status
+            status = stats.supply_status
+            if status == "Shortage":
+                status_display = f"[red]{status}[/red]"
+            elif status == "Surplus":
+                status_display = f"[yellow]{status}[/yellow]"
+            elif status == "Balanced":
+                status_display = f"[green]{status}[/green]"
+            else:
+                status_display = f"[dim]{status}[/dim]"
 
             table.add_row(
                 stats.ware.name,
                 str(stats.module_count),
                 f"{stats.total_stock:,}",
-                f"{stats.total_capacity:,}",
-                capacity_bar
+                utilization_bar,
+                status_display
             )
 
         self.console.print(table)
@@ -115,6 +126,31 @@ class Dashboard:
 
         return bar
 
+    def _create_utilization_bar(self, percent: float, width: int = 15) -> str:
+        """Create a text-based utilization bar (supply vs demand)."""
+        if percent == 0:
+            return "[dim]No Demand[/dim]"
+
+        # Cap at 200% for display purposes
+        display_percent = min(percent, 200)
+        filled = int((display_percent / 200) * width)
+        empty = width - filled
+
+        # Color based on utilization level
+        # Green = balanced (80-120%), Yellow = surplus (<80%), Red = shortage (>120%)
+        if percent < 80:
+            color = "yellow"  # Surplus - could sell excess
+        elif percent <= 120:
+            color = "green"   # Balanced - ideal
+        else:
+            color = "red"     # Shortage - need more production
+
+        bar = f"[{color}]{'█' * filled}[/{color}]"
+        bar += f"[dim]{'░' * empty}[/dim]"
+        bar += f" {percent:.0f}%"
+
+        return bar
+
     def _display_quick_stats(self):
         """Display quick statistics section."""
         self.console.print("[bold]QUICK STATS[/bold]")
@@ -137,17 +173,33 @@ class Dashboard:
                 f"([green]{len(station.unique_products)} products[/green])"
             )
 
-        # Potential bottlenecks
-        bottlenecks = self.analyzer.get_potential_bottlenecks(stock_threshold=30.0)
-        if bottlenecks:
+        # Supply shortages (high priority)
+        shortages = self.analyzer.get_supply_shortages()
+        if shortages:
             self.console.print(
-                f"  [yellow]Potential Bottlenecks:[/yellow] "
-                f"{len(bottlenecks)} wares with low stock"
+                f"  [red]Supply Shortages:[/red] "
+                f"{len(shortages)} wares with demand exceeding production"
             )
-            for stats in bottlenecks[:3]:
+            for stats in shortages[:3]:
                 self.console.print(
                     f"    - [red]{stats.ware.name}[/red] "
-                    f"({stats.capacity_percent:.1f}% capacity)"
+                    f"({stats.production_utilization:.0f}% demand vs production)"
+                )
+
+        # Low stock warnings (secondary)
+        bottlenecks = self.analyzer.get_potential_bottlenecks(stock_threshold=30.0)
+        # Filter out already shown shortages
+        shortage_wares = {s.ware for s in shortages} if shortages else set()
+        bottlenecks = [b for b in bottlenecks if b.ware not in shortage_wares]
+        if bottlenecks:
+            self.console.print(
+                f"  [yellow]Low Stock:[/yellow] "
+                f"{len(bottlenecks)} wares below 30% capacity"
+            )
+            for stats in bottlenecks[:2]:
+                self.console.print(
+                    f"    - [yellow]{stats.ware.name}[/yellow] "
+                    f"({stats.capacity_percent:.1f}% storage)"
                 )
 
         self.console.print()

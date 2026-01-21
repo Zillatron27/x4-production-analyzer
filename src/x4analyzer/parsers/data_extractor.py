@@ -2,12 +2,39 @@
 
 import xml.etree.ElementTree as ET
 import random
+import logging
 from datetime import datetime
 from typing import List, Optional, Callable
+from pathlib import Path
 from ..models.entities import (
     Station, ProductionModule, Ship, TradeResource, EmpireData
 )
 from ..models.ware_database import get_ware
+
+
+# Setup logging
+def setup_logger():
+    """Setup logger to write to project logs directory."""
+    log_dir = Path.home() / "x4-production-analyzer" / "logs"
+    log_dir.mkdir(parents=True, exist_ok=True)
+    log_file = log_dir / "x4_parser.log"
+
+    logger = logging.getLogger("x4analyzer.parser")
+    logger.setLevel(logging.DEBUG)
+
+    # Clear existing handlers
+    logger.handlers = []
+
+    # File handler
+    fh = logging.FileHandler(log_file, mode='w')
+    fh.setLevel(logging.DEBUG)
+    fh.setFormatter(logging.Formatter('%(asctime)s - %(levelname)s - %(message)s'))
+    logger.addHandler(fh)
+
+    return logger, log_file
+
+
+logger, LOG_FILE = setup_logger()
 
 
 # Flavor text for data extraction phases
@@ -39,6 +66,9 @@ class DataExtractor:
         Returns:
             EmpireData object with all extracted information
         """
+        logger.info("=== Starting data extraction ===")
+        logger.info(f"Log file: {LOG_FILE}")
+
         empire = EmpireData()
 
         # Show some flavor text before extraction
@@ -51,12 +81,15 @@ class DataExtractor:
             progress_callback("Extracting metadata...", 0)
         empire.save_timestamp = self._extract_timestamp()
         empire.player_name = self._extract_player_name()
+        logger.info(f"Save timestamp: {empire.save_timestamp}")
+        logger.info(f"Player name: {empire.player_name}")
 
         # Build ship lookup table first
         if progress_callback:
             flavor = random.choice(EXTRACTION_FLAVOR)
             progress_callback(flavor + "...", 0)
         self._build_ship_lookup()
+        logger.info(f"Ship lookup table built: {len(self.ship_lookup)} ships")
 
         # Extract stations
         if progress_callback:
@@ -64,6 +97,7 @@ class DataExtractor:
         stations = self._extract_stations(progress_callback)
         empire.stations = stations
 
+        logger.info(f"Extraction complete: {len(stations)} stations")
         if progress_callback:
             progress_callback(f"Found {len(stations)} stations", len(stations))
 
@@ -144,6 +178,8 @@ class DataExtractor:
         name = station_elem.get("name", f"Station {station_id}")
         owner = station_elem.get("owner", "unknown")
 
+        logger.debug(f"Parsing station: {name} ({station_id})")
+
         # Get sector info - try multiple methods
         sector = "Unknown"
 
@@ -159,20 +195,79 @@ class DataExtractor:
             # This is a fallback and may need refinement based on actual save structure
             pass
 
+        # Detect station type from modules
+        station_type = self._detect_station_type(station_elem)
+
         station = Station(
             station_id=station_id,
             name=name,
             owner=owner,
-            sector=sector
+            sector=sector,
+            station_type=station_type
         )
 
         # Extract modules
         station.modules = self._extract_modules(station_elem)
+        logger.debug(f"  - {len(station.modules)} production modules")
 
         # Extract assigned ships
         station.assigned_ships = self._extract_assigned_ships(station_elem, station_id)
+        logger.debug(f"  - {len(station.assigned_ships)} assigned ships")
+
+        # Extract input demands (for all stations, especially wharfs/shipyards)
+        station.input_demands = self._extract_station_demands(station_elem)
+        if station.input_demands:
+            logger.debug(f"  - {len(station.input_demands)} input demands (type: {station_type})")
 
         return station
+
+    def _detect_station_type(self, station_elem: ET.Element) -> str:
+        """Detect station type from module macros."""
+        construction = station_elem.find(".//construction/sequence")
+        if construction is None:
+            return "production"
+
+        for entry in construction.findall("entry"):
+            macro = entry.get("macro", "").lower()
+            # Check for ship construction facilities
+            if "wharf" in macro or "shipyard" in macro:
+                if "shipyard" in macro:
+                    return "shipyard"
+                return "wharf"
+            elif "equipmentdock" in macro or "equipment" in macro:
+                return "equipmentdock"
+            elif "defence" in macro or "pier" in macro:
+                return "defence"
+
+        return "production"
+
+    def _extract_station_demands(self, station_elem: ET.Element) -> dict:
+        """Extract all input demands from station trade data."""
+        demands = {}
+
+        # Find buyer trades (inputs/consumption)
+        production_trades = station_elem.findall(".//trade/offers/production/trade")
+
+        for trade in production_trades:
+            # Only process buyer trades (consumption)
+            if trade.get("buyer") is None:
+                continue
+
+            ware_id = trade.get("ware", "")
+            if not ware_id:
+                continue
+
+            # Use 'desired' amount as demand, fallback to 'amount'
+            desired = int(trade.get("desired", 0))
+            amount = int(trade.get("amount", 0))
+            demand = desired if desired > 0 else amount
+
+            if demand > 0:
+                if ware_id not in demands:
+                    demands[ware_id] = 0
+                demands[ware_id] += demand
+
+        return demands
 
     def _extract_modules(self, station_elem: ET.Element) -> List[ProductionModule]:
         """Extract production modules from station."""
