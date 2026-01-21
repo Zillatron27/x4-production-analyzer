@@ -223,6 +223,40 @@ class StreamingDataExtractor:
                             if progress_callback and stations_found < 2:
                                 progress_callback(f"DEBUG: Entered subordinates section", stations_found)
 
+                    # === STATION COMPLETION ===
+                    # IMPORTANT: This must come BEFORE "elif event == 'end' and in_player_station"
+                    # Otherwise the broader condition will match first and station completion never runs!
+                    elif event == 'end' and elem.tag == 'component':
+                        # Only save station when we close the STATION component (not nested components)
+                        if in_station and component_depth == station_component_depth:
+                            if in_player_station and current_station_elem:
+                                # Build Station object
+                                station = self._build_station(
+                                    current_station_elem,
+                                    station_production_modules,
+                                    station_trade_data,
+                                    station_traders,
+                                    station_miners
+                                )
+                                stations.append(station)
+                                stations_found += 1
+
+                                if progress_callback:
+                                    progress_callback(
+                                        f"Found station: {station.name}",
+                                        stations_found
+                                    )
+
+                            # Reset state only when exiting the station component
+                            in_station = False
+                            in_player_station = False
+                            current_station_elem = None
+                            station_component_depth = 0
+
+                        # Decrement component depth for all components
+                        component_depth -= 1
+                        elem.clear()
+
                     # === DATA EXTRACTION ===
                     elif event == 'end' and in_player_station:
 
@@ -298,38 +332,6 @@ class StreamingDataExtractor:
                         elif elem.tag == 'subordinates':
                             in_subordinates = False
                             elem.clear()
-
-                    # === STATION COMPLETION ===
-                    elif event == 'end' and elem.tag == 'component':
-                        # Only save station when we close the STATION component (not nested components)
-                        if in_station and component_depth == station_component_depth:
-                            if in_player_station and current_station_elem:
-                                # Build Station object
-                                station = self._build_station(
-                                    current_station_elem,
-                                    station_production_modules,
-                                    station_trade_data,
-                                    station_traders,
-                                    station_miners
-                                )
-                                stations.append(station)
-                                stations_found += 1
-
-                                if progress_callback:
-                                    progress_callback(
-                                        f"Found station: {station.name}",
-                                        stations_found
-                                    )
-
-                            # Reset state only when exiting the station component
-                            in_station = False
-                            in_player_station = False
-                            current_station_elem = None
-                            station_component_depth = 0
-
-                        # Decrement component depth for all components
-                        component_depth -= 1
-                        elem.clear()
 
                     # Clear other elements to free memory
                     elif event == 'end':
