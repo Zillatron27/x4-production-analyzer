@@ -69,13 +69,18 @@ class PathDetector:
     SAVE_PATHS = [
         # Windows default
         Path.home() / "Documents" / "Egosoft" / "X4" / "save",
-        # Linux native
+        # Linux native (direct)
         Path.home() / ".config" / "EgoSoft" / "X4" / "save",
         # Steam Proton (Linux)
         Path.home() / ".steam" / "steam" / "steamapps" / "compatdata" / "392160" / "pfx" / "drive_c" / "users" / "steamuser" / "Documents" / "Egosoft" / "X4" / "save",
         Path.home() / ".local" / "share" / "Steam" / "steamapps" / "compatdata" / "392160" / "pfx" / "drive_c" / "users" / "steamuser" / "Documents" / "Egosoft" / "X4" / "save",
         # Flatpak Steam
         Path.home() / ".var" / "app" / "com.valvesoftware.Steam" / ".local" / "share" / "Steam" / "steamapps" / "compatdata" / "392160" / "pfx" / "drive_c" / "users" / "steamuser" / "Documents" / "Egosoft" / "X4" / "save",
+    ]
+
+    # Base directories to scan for account-specific save folders
+    SAVE_BASE_DIRS = [
+        Path.home() / ".config" / "EgoSoft" / "X4",  # Linux: ~/.config/EgoSoft/X4/{AccountID}/save
     ]
 
     # Common X4 game installation locations
@@ -98,13 +103,34 @@ class PathDetector:
     @classmethod
     def find_save_directory(cls) -> Optional[Path]:
         """Find the X4 save directory."""
+        # First check direct paths
         for path in cls.SAVE_PATHS:
             if path.exists() and path.is_dir():
-                # Check if it contains save files
-                save_files = list(path.glob("save_*.xml.gz")) + list(path.glob("quicksave*.xml.gz"))
+                # Check if it contains save files (gzipped or plain XML)
+                save_files = (list(path.glob("save_*.xml.gz")) +
+                              list(path.glob("quicksave*.xml.gz")) +
+                              list(path.glob("save_*.xml")) +
+                              list(path.glob("quicksave*.xml")))
                 if save_files:
                     logger.info(f"Found save directory: {path}")
                     return path
+
+        # Then scan base directories for account-specific folders
+        # Linux stores saves in ~/.config/EgoSoft/X4/{Steam3AccountID}/save
+        for base_dir in cls.SAVE_BASE_DIRS:
+            if base_dir.exists() and base_dir.is_dir():
+                # Look for any subdirectory that contains a save folder
+                for subdir in base_dir.iterdir():
+                    if subdir.is_dir():
+                        save_path = subdir / "save"
+                        if save_path.exists() and save_path.is_dir():
+                            save_files = (list(save_path.glob("save_*.xml.gz")) +
+                                          list(save_path.glob("quicksave*.xml.gz")) +
+                                          list(save_path.glob("save_*.xml")) +
+                                          list(save_path.glob("quicksave*.xml")))
+                            if save_files:
+                                logger.info(f"Found save directory: {save_path}")
+                                return save_path
 
         logger.warning("Could not auto-detect save directory")
         return None
