@@ -130,11 +130,13 @@ class StreamingParser:
 
         station_count = 0
         ship_count = 0
+        player_ship_count = 0
 
         # Track element path for context
         path = []
         current_component = None
         component_stack = []
+        in_ships_connection = False  # Track when inside <connection connection="ships">
 
         if progress_callback:
             progress_callback("Scanning save file...", 0)
@@ -144,6 +146,10 @@ class StreamingParser:
 
             if event == 'start':
                 path.append(tag)
+
+                # Track when we enter a ships connection
+                if tag == 'connection' and elem.get('connection') == 'ships':
+                    in_ships_connection = True
 
                 # Track nested components
                 if tag == 'component':
@@ -188,6 +194,15 @@ class StreamingParser:
                         self._ships[comp_id] = ship
                         ship_count += 1
 
+                        # If this ship is inside a player station's ships connection, link it
+                        if self._in_player_station and in_ships_connection and comp_owner == 'player':
+                            station = self._stations.get(self._current_station_id)
+                            if station and comp_id not in station.subordinate_ids:
+                                station.subordinate_ids.append(comp_id)
+                                player_ship_count += 1
+                                if player_ship_count <= 20:
+                                    logger.debug(f"Assigned ship {comp_id} to station {self._current_station_id}")
+
                         if ship_count <= 10 or ship_count % 100 == 0:
                             logger.debug(f"Found ship: {ship.name} ({comp_id}) class={comp_class}")
 
@@ -196,6 +211,10 @@ class StreamingParser:
 
             elif event == 'end':
                 # Process completed elements
+
+                # Track when we exit a ships connection
+                if tag == 'connection':
+                    in_ships_connection = False
 
                 # Save metadata from info element
                 if tag == 'save' and 'info' in path:
@@ -286,7 +305,7 @@ class StreamingParser:
                 if path:
                     path.pop()
 
-        logger.info(f"Streaming parse found {station_count} stations, {ship_count} ships")
+        logger.info(f"Streaming parse found {station_count} stations, {ship_count} ships ({player_ship_count} assigned to player stations)")
 
         if progress_callback:
             progress_callback(f"Found {station_count} stations, {ship_count} ships", station_count)
