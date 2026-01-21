@@ -117,6 +117,7 @@ class Station:
 class EmpireData:
     """Container for all parsed empire data."""
     stations: List[Station] = field(default_factory=list)
+    unassigned_ships: List[Ship] = field(default_factory=list)  # Player ships not assigned to any station
     save_timestamp: str = ""
     player_name: str = "Unknown"
 
@@ -126,12 +127,27 @@ class EmpireData:
         return sum(len(s.production_modules) for s in self.stations)
 
     @property
-    def all_ships(self) -> List[Ship]:
-        """Get all ships across all stations."""
+    def all_assigned_ships(self) -> List[Ship]:
+        """Get all ships assigned to stations."""
         ships = []
         for station in self.stations:
             ships.extend(station.assigned_ships)
         return ships
+
+    @property
+    def all_ships(self) -> List[Ship]:
+        """Get all player ships (assigned + unassigned)."""
+        return self.all_assigned_ships + self.unassigned_ships
+
+    @property
+    def unassigned_traders(self) -> List[Ship]:
+        """Get unassigned trader ships."""
+        return [s for s in self.unassigned_ships if s.ship_type == "trader"]
+
+    @property
+    def unassigned_miners(self) -> List[Ship]:
+        """Get unassigned miner ships."""
+        return [s for s in self.unassigned_ships if s.ship_type == "miner"]
 
     def get_production_by_ware(self) -> Dict[Ware, List[ProductionModule]]:
         """Group production modules by output ware."""

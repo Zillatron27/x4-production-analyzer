@@ -193,9 +193,13 @@ class ViewRenderer:
 
         # Empire-wide summary
         self.console.print("[bold]Empire-Wide Summary:[/bold]")
-        self.console.print(f"  Total Ships: [green]{summary['total_ships']}[/green]")
-        self.console.print(f"  Traders: [cyan]{summary['traders']}[/cyan]")
-        self.console.print(f"  Miners: [cyan]{summary['miners']}[/cyan]")
+        self.console.print(f"  Total Ships: [green]{summary['total_ships']}[/green] "
+                          f"([cyan]{summary['assigned_ships']}[/cyan] assigned, "
+                          f"[yellow]{summary['unassigned_ships']}[/yellow] unassigned)")
+        self.console.print(f"  Traders: [cyan]{summary['traders']}[/cyan] "
+                          f"({summary['assigned_traders']} assigned, {summary['unassigned_traders']} unassigned)")
+        self.console.print(f"  Miners: [cyan]{summary['miners']}[/cyan] "
+                          f"({summary['assigned_miners']} assigned, {summary['unassigned_miners']} unassigned)")
         self.console.print(f"  Total Cargo Capacity: {summary['total_cargo_capacity']:,}\n")
 
         # Station type breakdown
@@ -258,6 +262,41 @@ class ViewRenderer:
                 self.console.print(f"  - {station.name}")
             if len(no_ships) > 5:
                 self.console.print(f"  ... and {len(no_ships) - 5} more")
+            self.console.print()
+
+        # Display unassigned ships
+        if self.empire.unassigned_ships:
+            self.console.print(f"[bold yellow]Unassigned Ships: {len(self.empire.unassigned_ships)}[/bold yellow]")
+
+            # Group by ship type
+            unassigned_by_type = {}
+            for ship in self.empire.unassigned_ships:
+                ship_type = ship.ship_type
+                if ship_type not in unassigned_by_type:
+                    unassigned_by_type[ship_type] = []
+                unassigned_by_type[ship_type].append(ship)
+
+            table = Table(show_header=True, box=None)
+            table.add_column("Type", style="cyan")
+            table.add_column("Count", justify="right", style="green")
+            table.add_column("Cargo", justify="right")
+            table.add_column("Example Ships", style="dim")
+
+            for ship_type, ships in sorted(unassigned_by_type.items(), key=lambda x: -len(x[1])):
+                total_cargo = sum(s.cargo_capacity for s in ships)
+                # Show first 3 ship names as examples
+                examples = ", ".join(s.name for s in ships[:3])
+                if len(ships) > 3:
+                    examples += f" (+{len(ships) - 3} more)"
+
+                table.add_row(
+                    ship_type.title(),
+                    str(len(ships)),
+                    f"{total_cargo:,}",
+                    examples[:50] + "..." if len(examples) > 50 else examples
+                )
+
+            self.console.print(table)
             self.console.print()
 
         self._wait_for_enter()

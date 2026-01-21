@@ -45,6 +45,7 @@ class ParsedStation:
     station_type: str = "production"
     modules: List[str] = field(default_factory=list)  # macro names only
     subordinate_ids: List[str] = field(default_factory=list)
+    subordinate_connection_ids: List[str] = field(default_factory=list)  # Connection IDs from <connection connection="subordinates">
     trade_wares: Dict[str, Dict] = field(default_factory=dict)
 
 
@@ -54,8 +55,10 @@ class ParsedShip:
     ship_id: str
     name: str
     macro: str
+    owner: str = ""
     purpose: str = ""
     cargo_capacity: int = 0
+    commander_id: Optional[str] = None  # Station or fleet commander this ship is assigned to
 
 
 class StreamingParser:
@@ -78,6 +81,11 @@ class StreamingParser:
         # State tracking
         self._current_station_id: Optional[str] = None
         self._in_player_station = False
+
+        # Ship-station linking: maps subordinates connection ID to station ID
+        self._subordinate_conn_to_station: Dict[str, str] = {}
+        # Maps ship commander connected ID to ship ID (for linking)
+        self._ship_commander_connected: Dict[str, str] = {}
 
     def parse(self, progress_callback: Optional[Callable[[str, int], None]] = None) -> EmpireData:
         """
@@ -138,6 +146,12 @@ class StreamingParser:
         component_stack = []
         in_ships_connection = False  # Track when inside <connection connection="ships">
 
+        # Track current ship being parsed for commander extraction
+        current_player_ship_id: Optional[str] = None
+        in_commander_connection = False  # Track when inside <connection connection="commander">
+        in_subordinates_connection = False  # Track when inside <connection connection="subordinates">
+        current_subordinates_conn_id: Optional[str] = None
+
         if progress_callback:
             progress_callback("Scanning save file...", 0)
 
@@ -150,6 +164,21 @@ class StreamingParser:
                 # Track when we enter a ships connection
                 if tag == 'connection' and elem.get('connection') == 'ships':
                     in_ships_connection = True
+
+                # Track when we enter a commander connection (inside a ship)
+                if tag == 'connection' and elem.get('connection') == 'commander':
+                    in_commander_connection = True
+
+                # Track when we enter a subordinates connection (inside a station)
+                if tag == 'connection' and elem.get('connection') == 'subordinates':
+                    in_subordinates_connection = True
+                    current_subordinates_conn_id = elem.get('id', '')
+                    # Record this subordinates connection ID for the current station
+                    if self._in_player_station and self._current_station_id and current_subordinates_conn_id:
+                        station = self._stations.get(self._current_station_id)
+                        if station:
+                            station.subordinate_connection_ids.append(current_subordinates_conn_id)
+                            self._subordinate_conn_to_station[current_subordinates_conn_id] = self._current_station_id
 
                 # Track nested components
                 if tag == 'component':
@@ -189,22 +218,19 @@ class StreamingParser:
                             ship_id=comp_id,
                             name=elem.get('name', f'Ship {comp_id}'),
                             macro=elem.get('macro', ''),
+                            owner=comp_owner,
                             purpose=elem.get('purpose', '')
                         )
                         self._ships[comp_id] = ship
                         ship_count += 1
 
-                        # If this ship is inside a player station's ships connection, link it
-                        if self._in_player_station and in_ships_connection and comp_owner == 'player':
-                            station = self._stations.get(self._current_station_id)
-                            if station and comp_id not in station.subordinate_ids:
-                                station.subordinate_ids.append(comp_id)
-                                player_ship_count += 1
-                                if player_ship_count <= 20:
-                                    logger.debug(f"Assigned ship {comp_id} to station {self._current_station_id}")
+                        # Track this ship if it's a player ship (for commander linking)
+                        if comp_owner == 'player':
+                            current_player_ship_id = comp_id
+                            player_ship_count += 1
 
                         if ship_count <= 10 or ship_count % 100 == 0:
-                            logger.debug(f"Found ship: {ship.name} ({comp_id}) class={comp_class}")
+                            logger.debug(f"Found ship: {ship.name} ({comp_id}) class={comp_class} owner={comp_owner}")
 
                         if progress_callback and ship_count % 500 == 0:
                             progress_callback(f"Found {station_count} stations, {ship_count} ships...", station_count)
@@ -212,9 +238,27 @@ class StreamingParser:
             elif event == 'end':
                 # Process completed elements
 
+                # Capture the <connected> element inside commander connection
+                if tag == 'connected' and in_commander_connection and current_player_ship_id:
+                    connected_id = elem.get('connection', '')
+                    if connected_id:
+                        # Store this for post-processing: connected_id -> ship_id
+                        self._ship_commander_connected[current_player_ship_id] = connected_id
+                        ship = self._ships.get(current_player_ship_id)
+                        if ship:
+                            ship.commander_id = connected_id
+                            logger.debug(f"Ship {current_player_ship_id} commander connected to {connected_id}")
+
                 # Track when we exit a ships connection
                 if tag == 'connection':
-                    in_ships_connection = False
+                    conn_type = elem.get('connection', '')
+                    if conn_type == 'ships':
+                        in_ships_connection = False
+                    elif conn_type == 'commander':
+                        in_commander_connection = False
+                    elif conn_type == 'subordinates':
+                        in_subordinates_connection = False
+                        current_subordinates_conn_id = None
 
                 # Save metadata from info element
                 if tag == 'save' and 'info' in path:
@@ -248,6 +292,10 @@ class StreamingParser:
                     if comp_info['class'] == 'station' and comp_info['owner'] == 'player':
                         self._in_player_station = False
                         self._current_station_id = None
+
+                    # Check if we're leaving a player ship
+                    if comp_info['class'].startswith('ship_') and comp_info['owner'] == 'player':
+                        current_player_ship_id = None
 
                 # Process production module entries
                 elif tag == 'entry' and self._in_player_station:
@@ -305,16 +353,58 @@ class StreamingParser:
                 if path:
                     path.pop()
 
-        logger.info(f"Streaming parse found {station_count} stations, {ship_count} ships ({player_ship_count} assigned to player stations)")
+        logger.info(f"Streaming parse found {station_count} stations, {ship_count} ships ({player_ship_count} player ships)")
+        logger.info(f"Collected {len(self._subordinate_conn_to_station)} subordinate connections from stations")
+        logger.info(f"Collected {len(self._ship_commander_connected)} ship commander connections")
+
+        # Post-processing: Link ships to stations via commander connections
+        self._link_ships_to_stations()
+
+        # Count assigned ships
+        assigned_count = sum(len(s.subordinate_ids) for s in self._stations.values())
+        logger.info(f"After linking: {assigned_count} ships assigned to player stations")
 
         if progress_callback:
-            progress_callback(f"Found {station_count} stations, {ship_count} ships", station_count)
+            progress_callback(f"Found {station_count} stations, {ship_count} ships ({assigned_count} assigned)", station_count)
+
+    def _link_ships_to_stations(self):
+        """
+        Link player ships to stations using the commander connection data.
+
+        X4 structure:
+        - Stations have <connection connection="subordinates" id="[conn_id]">
+        - Ships have <connection connection="commander"><connected connection="[conn_id]"/></connection>
+
+        When a ship's commander connected ID matches a station's subordinates connection ID,
+        the ship is assigned to that station.
+        """
+        linked_count = 0
+
+        for ship_id, commander_conn_id in self._ship_commander_connected.items():
+            ship = self._ships.get(ship_id)
+            if not ship or ship.owner != 'player':
+                continue
+
+            # Check if this commander connection points to a station's subordinates connection
+            station_id = self._subordinate_conn_to_station.get(commander_conn_id)
+            if station_id:
+                station = self._stations.get(station_id)
+                if station and ship_id not in station.subordinate_ids:
+                    station.subordinate_ids.append(ship_id)
+                    linked_count += 1
+                    if linked_count <= 20:
+                        logger.debug(f"Linked ship {ship_id} ({ship.name}) to station {station_id} ({station.name})")
+
+        logger.info(f"Linked {linked_count} ships to stations via commander connections")
 
     def _build_empire_data(self) -> EmpireData:
         """Convert parsed data to EmpireData model."""
         empire = EmpireData()
         empire.player_name = self._player_name
         empire.save_timestamp = self._save_timestamp
+
+        # Track which ships get assigned to stations
+        assigned_ship_ids = set()
 
         for station_id, parsed in self._stations.items():
             station = Station(
@@ -369,8 +459,27 @@ class StreamingParser:
                         assigned_station_id=station_id
                     )
                     station.assigned_ships.append(ship)
+                    assigned_ship_ids.add(sub_id)
 
             empire.stations.append(station)
+
+        # Collect unassigned player ships
+        for ship_id, ship_data in self._ships.items():
+            if ship_data.owner == 'player' and ship_id not in assigned_ship_ids:
+                ship_type = self._determine_ship_type(ship_data)
+                ship = Ship(
+                    ship_id=ship_data.ship_id,
+                    name=ship_data.name,
+                    ship_class=ship_data.macro,
+                    ship_type=ship_type,
+                    cargo_capacity=ship_data.cargo_capacity,
+                    assigned_station_id=None
+                )
+                empire.unassigned_ships.append(ship)
+
+        logger.info(f"Built empire data: {len(empire.stations)} stations, "
+                   f"{len(empire.all_assigned_ships)} assigned ships, "
+                   f"{len(empire.unassigned_ships)} unassigned ships")
 
         return empire
 

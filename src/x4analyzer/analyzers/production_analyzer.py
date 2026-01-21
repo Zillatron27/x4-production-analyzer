@@ -286,22 +286,36 @@ class ProductionAnalyzer:
 
     def get_logistics_summary(self) -> Dict[str, int]:
         """Get empire-wide logistics summary."""
-        total_traders = 0
-        total_miners = 0
-        total_cargo = 0
-        total_ships = 0
+        assigned_traders = 0
+        assigned_miners = 0
+        assigned_cargo = 0
+        assigned_ships = 0
 
         for station in self.empire.stations:
-            total_traders += len(station.traders)
-            total_miners += len(station.miners)
-            total_cargo += station.total_cargo_capacity
-            total_ships += len(station.assigned_ships)
+            assigned_traders += len(station.traders)
+            assigned_miners += len(station.miners)
+            assigned_cargo += station.total_cargo_capacity
+            assigned_ships += len(station.assigned_ships)
+
+        # Unassigned ships
+        unassigned_ships = len(self.empire.unassigned_ships)
+        unassigned_traders = len(self.empire.unassigned_traders)
+        unassigned_miners = len(self.empire.unassigned_miners)
+        unassigned_cargo = sum(s.cargo_capacity for s in self.empire.unassigned_ships)
 
         return {
-            "total_ships": total_ships,
-            "traders": total_traders,
-            "miners": total_miners,
-            "total_cargo_capacity": total_cargo
+            "total_ships": assigned_ships + unassigned_ships,
+            "assigned_ships": assigned_ships,
+            "unassigned_ships": unassigned_ships,
+            "traders": assigned_traders + unassigned_traders,
+            "assigned_traders": assigned_traders,
+            "unassigned_traders": unassigned_traders,
+            "miners": assigned_miners + unassigned_miners,
+            "assigned_miners": assigned_miners,
+            "unassigned_miners": unassigned_miners,
+            "total_cargo_capacity": assigned_cargo + unassigned_cargo,
+            "assigned_cargo_capacity": assigned_cargo,
+            "unassigned_cargo_capacity": unassigned_cargo
         }
 
     def search_production(self, query: str) -> List[ProductionStats]:
