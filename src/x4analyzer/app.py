@@ -5,8 +5,7 @@ from pathlib import Path
 from rich.console import Console
 from rich.table import Table
 
-from .parsers.save_parser import SaveFileParser
-from .parsers.data_extractor import DataExtractor
+from .parsers.streaming_parser import StreamingParser
 from .analyzers.production_analyzer import ProductionAnalyzer
 from .ui.dashboard import Dashboard
 from .ui.views import ViewRenderer
@@ -35,18 +34,14 @@ class X4Analyzer:
             return False
 
         try:
-            # Parse save file
-            parser = SaveFileParser(file_path)
-            self.console.print()
-            root = parser.parse_with_progress()
-
-            # Extract data
-            extractor = DataExtractor(root)
+            # Parse save file using memory-efficient streaming parser
+            self.console.print("[cyan]Parsing save file (streaming mode)...[/cyan]")
+            parser = StreamingParser(file_path)
 
             def progress_callback(msg, count):
                 self.console.print(f"[cyan]{msg}[/cyan]")
 
-            self.empire = extractor.extract_all(progress_callback)
+            self.empire = parser.parse(progress_callback)
 
             # Analyze
             self.console.print("[cyan]Analyzing production data...[/cyan]")
