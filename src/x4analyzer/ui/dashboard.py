@@ -50,12 +50,12 @@ class Dashboard:
 
         by_category = self.analyzer.get_production_by_category()
 
-        # Define category display order
+        # Define category display order (highest tier first)
         category_order = [
-            WareCategory.SHIP_COMPONENTS,
-            WareCategory.ADVANCED_MATERIALS,
-            WareCategory.INTERMEDIATE,
-            WareCategory.BASIC,
+            WareCategory.TIER_3,
+            WareCategory.TIER_2,
+            WareCategory.TIER_1,
+            WareCategory.RAW,
             WareCategory.UNKNOWN
         ]
 
@@ -178,12 +178,12 @@ class Dashboard:
         if shortages:
             self.console.print(
                 f"  [red]Supply Shortages:[/red] "
-                f"{len(shortages)} wares with demand exceeding production"
+                f"{len(shortages)} wares with requests exceeding production"
             )
             for stats in shortages[:3]:
                 self.console.print(
                     f"    - [red]{stats.ware.name}[/red] "
-                    f"({stats.production_utilization:.0f}% demand vs production)"
+                    f"({stats.production_utilization:.0f}% requested vs capacity)"
                 )
 
         # Low stock warnings (secondary)

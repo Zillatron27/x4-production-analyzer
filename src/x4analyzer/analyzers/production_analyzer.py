@@ -1,6 +1,6 @@
 """Production analysis and statistics."""
 
-from typing import Dict, List, Tuple
+from typing import Dict, List, Tuple, Optional
 from collections import defaultdict
 from ..models.entities import (
     EmpireData, Station, ProductionModule, Ware, WareCategory, TradeResource
@@ -23,6 +23,11 @@ class ProductionStats:
         self.consuming_stations: Dict[str, int] = {}  # station_name -> demand amount
         self.producing_stations: Dict[str, int] = {}  # station_name -> module count
 
+        # True production rates (from game data)
+        self.production_rate_per_hour: float = 0.0  # Units per hour
+        self.consumption_rate_per_hour: float = 0.0  # Units per hour
+        self.has_rate_data: bool = False  # Whether we have actual rate data
+
     @property
     def capacity_percent(self) -> float:
         """Calculate overall stock vs capacity utilization (storage fill level)."""
@@ -40,6 +45,11 @@ class ProductionStats:
     @property
     def supply_status(self) -> str:
         """Get supply status: Surplus, Balanced, or Shortage."""
+        # Use rate-based calculation if available
+        if self.has_rate_data:
+            return self._rate_based_supply_status()
+
+        # Fallback to stock-based estimation
         # If we have consumption but no production, that's a shortage
         if self.total_consumption_demand > 0 and self.total_production_output == 0:
             return "Shortage"
@@ -57,6 +67,30 @@ class ProductionStats:
             return "Balanced"
         else:
             return "Shortage"
+
+    def _rate_based_supply_status(self) -> str:
+        """Get supply status based on actual production rates."""
+        if self.production_rate_per_hour == 0:
+            if self.consumption_rate_per_hour > 0:
+                return "Shortage"
+            return "No Demand"
+
+        if self.consumption_rate_per_hour == 0:
+            return "Surplus"
+
+        # Calculate ratio of consumption to production
+        ratio = self.consumption_rate_per_hour / self.production_rate_per_hour
+        if ratio < 0.8:
+            return "Surplus"
+        elif ratio <= 1.2:
+            return "Balanced"
+        else:
+            return "Shortage"
+
+    @property
+    def rate_balance(self) -> float:
+        """Get the balance between production and consumption rates (units/hour)."""
+        return self.production_rate_per_hour - self.consumption_rate_per_hour
 
     def add_module(self, module: ProductionModule, station_name: str = "Unknown"):
         """Add a module to the stats."""
@@ -295,3 +329,71 @@ class ProductionAnalyzer:
         for station in self.empire.stations:
             by_type[station.station_type].append(station)
         return dict(by_type)
+
+    def load_game_data(self, wares_extractor) -> bool:
+        """
+        Load production rate data from game files.
+
+        Args:
+            wares_extractor: A WaresExtractor instance with loaded game data
+
+        Returns:
+            True if rate data was successfully loaded
+        """
+        if not wares_extractor:
+            return False
+
+        try:
+            game_wares = wares_extractor.extract()
+            loaded_count = 0
+
+            for stats in self._production_stats.values():
+                ware_id = stats.ware.ware_id.lower()
+                game_ware = game_wares.get(ware_id)
+
+                if game_ware and game_ware.default_method:
+                    # Calculate total production rate (rate per module * module count)
+                    rate_per_module = game_ware.default_method.units_per_hour
+                    stats.production_rate_per_hour = rate_per_module * stats.module_count
+                    stats.has_rate_data = True
+                    loaded_count += 1
+
+                    # Calculate consumption rate for this ware
+                    # Sum up consumption from all modules that use this ware as input
+                    self._calculate_consumption_rate(stats, game_wares)
+
+            return loaded_count > 0
+
+        except Exception as e:
+            import logging
+            logging.getLogger("x4analyzer").warning(f"Failed to load game data: {e}")
+            return False
+
+    def _calculate_consumption_rate(self, stats: ProductionStats, game_wares: dict):
+        """Calculate consumption rate for a ware based on what consumes it."""
+        total_consumption = 0.0
+
+        # Find all modules that consume this ware
+        for other_stats in self._production_stats.values():
+            if other_stats.ware.ware_id == stats.ware.ware_id:
+                continue
+
+            # Check if this ware produces something that consumes our target ware
+            other_ware_id = other_stats.ware.ware_id.lower()
+            other_game_ware = game_wares.get(other_ware_id)
+
+            if other_game_ware and other_game_ware.default_method:
+                for resource in other_game_ware.default_method.resources:
+                    if resource.ware_id.lower() == stats.ware.ware_id.lower():
+                        # This ware consumes our target
+                        consumption_per_module = other_game_ware.default_method.resource_per_hour(resource.ware_id)
+                        total_consumption += consumption_per_module * other_stats.module_count
+                        break
+
+        stats.consumption_rate_per_hour = total_consumption
+
+    @property
+    def has_rate_data(self) -> bool:
+        """Check if any production stats have rate data loaded."""
+        return any(stats.has_rate_data for stats in self._production_stats.values())
+
