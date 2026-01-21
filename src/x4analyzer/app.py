@@ -52,6 +52,9 @@ class X4Analyzer:
             self.console.print("[cyan]Analyzing production data...[/cyan]")
             self.analyzer = ProductionAnalyzer(self.empire)
 
+            # Try to load game data for accurate production rates
+            self._load_game_data()
+
             # Setup UI
             self.dashboard = Dashboard(self.empire, self.analyzer)
             self.views = ViewRenderer(self.empire, self.analyzer)
@@ -133,6 +136,29 @@ class X4Analyzer:
                 self.console.print(f"[dim]Checked: {save_dir}[/dim]")
 
             return self.console.input("\nEnter save file path: ").strip()
+
+    def _load_game_data(self):
+        """Try to load game data for accurate production rates."""
+        game_dir = self.config_manager.get_game_directory()
+
+        if not game_dir:
+            self.console.print("[dim]Game directory not found - using estimated rates[/dim]")
+            return
+
+        try:
+            from .game_data import WaresExtractor
+
+            self.console.print("[cyan]Loading game data for production rates...[/cyan]")
+            cache_dir = self.config_manager.config.cache_directory
+
+            extractor = WaresExtractor(game_dir, cache_dir)
+            if self.analyzer.load_game_data(extractor):
+                self.console.print("[green]Loaded production rate data from game files[/green]")
+            else:
+                self.console.print("[dim]Could not load game production data[/dim]")
+
+        except Exception as e:
+            self.console.print(f"[dim]Game data unavailable: {e}[/dim]")
 
     def run(self):
         """Run the main application loop."""
