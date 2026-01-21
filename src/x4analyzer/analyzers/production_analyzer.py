@@ -20,7 +20,7 @@ class ProductionStats:
         # Supply/demand tracking
         self.total_production_output = 0  # Total production capacity across all modules
         self.total_consumption_demand = 0  # Total consumption needed by other stations
-        self.consuming_stations: List[Tuple[Station, int]] = []  # (station, amount_needed)
+        self.consuming_stations: Dict[Station, int] = {}  # {station: total_amount_needed}
 
     @property
     def capacity_percent(self) -> float:
@@ -58,11 +58,20 @@ class ProductionStats:
             self.total_stock += module.output.amount
             self.total_capacity += module.output.capacity
             self.total_production_output += module.output.capacity  # Use capacity as production rate
+        elif module.output_ware:
+            # Module produces this ware but has no trade data (internal consumption)
+            # Use a reasonable default production rate based on typical module output
+            # Most production modules have ~5000-15000 capacity, use 10000 as estimate
+            estimated_capacity = 10000
+            self.total_production_output += estimated_capacity
 
     def add_consumption(self, station: Station, amount: int):
-        """Add consumption demand from a station."""
+        """Add consumption demand from a station (aggregates by station)."""
         self.total_consumption_demand += amount
-        self.consuming_stations.append((station, amount))
+        if station in self.consuming_stations:
+            self.consuming_stations[station] += amount
+        else:
+            self.consuming_stations[station] = amount
 
 
 class ProductionAnalyzer:
@@ -170,14 +179,24 @@ class ProductionAnalyzer:
             if stats:
                 input_stats.append(stats)
 
-        # Find consumers (modules that use this ware as input)
+        # Find consumers (wares that use this as input) - deduplicated
         consumer_stats = []
+        seen_wares = set()
         for stats in self._production_stats.values():
+            # Check if any module in this stats uses our target ware as input
+            uses_target = False
             for module in stats.modules:
                 for input_res in module.inputs:
                     if input_res.ware == target_stats.ware:
-                        consumer_stats.append(stats)
+                        uses_target = True
                         break
+                if uses_target:
+                    break
+
+            # Only add once per ware (not once per module)
+            if uses_target and stats.ware not in seen_wares:
+                consumer_stats.append(stats)
+                seen_wares.add(stats.ware)
 
         return {
             "inputs": input_stats,

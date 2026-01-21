@@ -89,8 +89,8 @@ class ViewRenderer:
             table.add_column("Station", style="cyan")
             table.add_column("Demand", justify="right", style="yellow")
 
-            # Sort by demand (highest first)
-            sorted_consumers = sorted(stats.consuming_stations, key=lambda x: x[1], reverse=True)
+            # Sort by demand (highest first) - now working with dict
+            sorted_consumers = sorted(stats.consuming_stations.items(), key=lambda x: x[1], reverse=True)
             for station, amount in sorted_consumers:
                 table.add_row(station.name, f"{amount:,}")
 
