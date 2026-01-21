@@ -146,11 +146,33 @@ class DataExtractor:
 
     def _build_ship_lookup(self):
         """Build a lookup table of all ships for quick access."""
-        # Find all ships in the universe
+        # Find all ships in the universe - try multiple detection methods
+        ship_count = 0
+
+        # Method 1: class='ship'
         for ship_elem in self.root.findall(".//component[@class='ship']"):
             ship_id = ship_elem.get("code", ship_elem.get("id", ""))
-            if ship_id:
+            if ship_id and ship_id not in self.ship_lookup:
                 self.ship_lookup[ship_id] = ship_elem
+                ship_count += 1
+
+        # Method 2: macro contains 'ship_' (common X4 naming)
+        for ship_elem in self.root.findall(".//component"):
+            macro = ship_elem.get("macro", "").lower()
+            if "ship_" in macro:
+                ship_id = ship_elem.get("code", ship_elem.get("id", ""))
+                if ship_id and ship_id not in self.ship_lookup:
+                    self.ship_lookup[ship_id] = ship_elem
+                    ship_count += 1
+
+        # Method 3: Look for <ship> elements directly
+        for ship_elem in self.root.findall(".//ship"):
+            ship_id = ship_elem.get("code", ship_elem.get("id", ""))
+            if ship_id and ship_id not in self.ship_lookup:
+                self.ship_lookup[ship_id] = ship_elem
+                ship_count += 1
+
+        logger.info(f"Ship detection: found {ship_count} ships via multiple methods")
 
     def _extract_stations(self, progress_callback: Optional[Callable[[str, int], None]] = None) -> List[Station]:
         """Extract all player-owned stations."""
@@ -396,14 +418,42 @@ class DataExtractor:
     def _extract_assigned_ships(self, station_elem: ET.Element, station_id: str) -> List[Ship]:
         """Extract ships assigned to this station."""
         ships = []
+        found_ids = set()
 
-        # Look for subordinates
+        # Method 1: Look for subordinates/component
         for subordinate in station_elem.findall(".//subordinates/component"):
             ship_id = subordinate.get("code", subordinate.get("id", ""))
-            if ship_id and ship_id in self.ship_lookup:
-                ship = self._parse_ship(self.ship_lookup[ship_id], station_id)
-                if ship:
-                    ships.append(ship)
+            if ship_id and ship_id not in found_ids:
+                if ship_id in self.ship_lookup:
+                    ship = self._parse_ship(self.ship_lookup[ship_id], station_id)
+                    if ship:
+                        ships.append(ship)
+                        found_ids.add(ship_id)
+
+        # Method 2: Look for subordinates with connection refs
+        for subordinate in station_elem.findall(".//subordinates/subordinate"):
+            ship_id = subordinate.get("object", subordinate.get("code", ""))
+            if ship_id and ship_id not in found_ids:
+                if ship_id in self.ship_lookup:
+                    ship = self._parse_ship(self.ship_lookup[ship_id], station_id)
+                    if ship:
+                        ships.append(ship)
+                        found_ids.add(ship_id)
+
+        # Method 3: Check for ships directly inside the station element
+        for ship_elem in station_elem.findall(".//component"):
+            macro = ship_elem.get("macro", "").lower()
+            comp_class = ship_elem.get("class", "")
+            if comp_class == "ship" or "ship_" in macro:
+                ship_id = ship_elem.get("code", ship_elem.get("id", ""))
+                if ship_id and ship_id not in found_ids:
+                    ship = self._parse_ship(ship_elem, station_id)
+                    if ship:
+                        ships.append(ship)
+                        found_ids.add(ship_id)
+
+        if ships:
+            logger.debug(f"  Found {len(ships)} ships via subordinate detection")
 
         return ships
 

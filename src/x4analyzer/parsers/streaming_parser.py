@@ -151,8 +151,13 @@ class StreamingParser:
                         if progress_callback and station_count % 5 == 0:
                             progress_callback(f"Found {station_count} stations...", station_count)
 
-                    # Found a ship
-                    elif comp_class == 'ship':
+                    # Found a ship - check class attribute OR macro containing 'ship'
+                    comp_macro = elem.get('macro', '').lower()
+                    is_ship = (comp_class == 'ship' or
+                               comp_class == 'object' and 'ship' in comp_macro or
+                               'ship_' in comp_macro)
+
+                    if is_ship and comp_class != 'station':
                         ship = ParsedShip(
                             ship_id=comp_id,
                             name=elem.get('name', f'Ship {comp_id}'),
@@ -161,6 +166,7 @@ class StreamingParser:
                         )
                         self._ships[comp_id] = ship
                         ship_count += 1
+                        logger.debug(f"Found ship: {ship.name} ({comp_id}) macro={ship.macro}")
 
             elif event == 'end':
                 # Process completed elements
