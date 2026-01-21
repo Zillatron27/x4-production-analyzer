@@ -32,8 +32,8 @@ class StreamingDataExtractor:
     def __init__(self, file_path: str):
         """Initialize streaming extractor with save file path."""
         self.file_path = Path(file_path)
-        self.save_timestamp = "Unknown"
-        self.player_name = "Unknown"
+        self.save_timestamp = None
+        self.player_name = None
 
     def extract_all(self, progress_callback: Optional[Callable[[str, int], None]] = None) -> EmpireData:
         """
@@ -322,8 +322,8 @@ class StreamingDataExtractor:
             raise
 
         # Build empire data
-        empire.save_timestamp = self.save_timestamp
-        empire.player_name = self.player_name
+        empire.save_timestamp = self.save_timestamp or "Unknown"
+        empire.player_name = self.player_name or "Unknown"
         empire.stations = stations
 
         debug_log.write(f"\n=== EXTRACTION SUMMARY ===\n")
