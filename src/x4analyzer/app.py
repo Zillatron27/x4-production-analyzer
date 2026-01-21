@@ -128,15 +128,16 @@ class X4Analyzer:
 
     def _show_banner(self):
         """Show application banner."""
-        banner = """╔═══════════════════════════════════════════════════════╗
-║                                                       ║
-║     X4 EMPIRE PRODUCTION ANALYZER v1.0                ║
-║                    BUILD 20260120-03                  ║
-║                                                       ║
-║     Analyze your production empire and optimize      ║
-║     resource management in X4: Foundations            ║
-║                                                       ║
-╚═══════════════════════════════════════════════════════╝"""
+        banner = """
++-------------------------------------------------------+
+|                                                       |
+|     X4 EMPIRE PRODUCTION ANALYZER v1.0                |
+|                    BUILD 20260120-03                  |
+|                                                       |
+|     Analyze your production empire and optimize      |
+|     resource management in X4: Foundations            |
+|                                                       |
++-------------------------------------------------------+"""
         self.console.print(banner, style="bold cyan")
         self.console.print()
 
