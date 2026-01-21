@@ -80,21 +80,24 @@ class Dashboard:
         table.add_column("Utilization", justify="left")
 
         for stats in stats_list:
-            # Create capacity bar
-            capacity_bar = self._create_capacity_bar(stats.capacity_percent)
+            # Create production utilization bar (consumption / production)
+            utilization_bar = self._create_utilization_bar(
+                stats.production_utilization,
+                stats.supply_status
+            )
 
             table.add_row(
                 stats.ware.name,
                 str(stats.module_count),
                 f"{stats.total_stock:,}",
                 f"{stats.total_capacity:,}",
-                capacity_bar
+                utilization_bar
             )
 
         self.console.print(table)
 
     def _create_capacity_bar(self, percent: float, width: int = 20) -> str:
-        """Create a text-based capacity bar."""
+        """Create a text-based capacity bar (legacy storage-based)."""
         if percent == 0:
             return "[dim]N/A[/dim]"
 
@@ -112,6 +115,30 @@ class Dashboard:
         bar = f"[{color}]{'█' * filled}[/{color}]"
         bar += f"[dim]{'░' * empty}[/dim]"
         bar += f" {percent:.1f}%"
+
+        return bar
+
+    def _create_utilization_bar(self, utilization: float, supply_status: str, width: int = 20) -> str:
+        """Create a text-based utilization bar showing production vs consumption."""
+        if utilization == 0:
+            return "[dim]No Demand[/dim]"
+
+        # Cap display at 100% for the bar, but show actual % in text
+        display_percent = min(100.0, utilization)
+        filled = int((display_percent / 100) * width)
+        empty = width - filled
+
+        # Color based on supply status
+        if supply_status == "Balanced":
+            color = "green"
+        elif supply_status == "Surplus":
+            color = "yellow"
+        else:  # Shortage
+            color = "red"
+
+        bar = f"[{color}]{'█' * filled}[/{color}]"
+        bar += f"[dim]{'░' * empty}[/dim]"
+        bar += f" {utilization:.1f}%"
 
         return bar
 

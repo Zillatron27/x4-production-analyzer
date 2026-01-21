@@ -41,10 +41,15 @@ class ViewRenderer:
 
         # Display current production
         self.console.print(f"\n[bold]Production: {stats.ware.name}[/bold]")
-        self.console.print(f"  Current modules: [green]{stats.module_count}[/green]")
-        self.console.print(f"  Total stock: {stats.total_stock:,}")
-        self.console.print(f"  Total capacity: {stats.total_capacity:,}")
-        self.console.print(f"  Utilization: {stats.capacity_percent:.1f}%\n")
+        self.console.print(f"  Production modules: [green]{stats.module_count}[/green]")
+        self.console.print(f"  Total production output: [cyan]{stats.total_production_output:,}[/cyan]")
+        self.console.print(f"  Total consumption demand: [yellow]{stats.total_consumption_demand:,}[/yellow]")
+
+        # Color code supply status
+        status_color = "green" if stats.supply_status == "Balanced" else ("yellow" if stats.supply_status == "Surplus" else "red")
+        self.console.print(f"  Supply status: [{status_color}]{stats.supply_status}[/{status_color}]")
+        self.console.print(f"  Production utilization: {stats.production_utilization:.1f}%")
+        self.console.print(f"  Storage: {stats.total_stock:,} / {stats.total_capacity:,}\n")
 
         # Analyze dependencies
         deps = self.analyzer.analyze_dependencies(query)
@@ -77,11 +82,28 @@ class ViewRenderer:
                     )
                 self.console.print()
 
-        # Display consumers
+        # Display consumers (stations that use this ware as input)
+        if stats.consuming_stations:
+            self.console.print(f"[bold yellow]Consumed By Stations:[/bold yellow]")
+            table = Table(show_header=True, box=None)
+            table.add_column("Station", style="cyan")
+            table.add_column("Demand", justify="right", style="yellow")
+
+            # Sort by demand (highest first)
+            sorted_consumers = sorted(stats.consuming_stations, key=lambda x: x[1], reverse=True)
+            for station, amount in sorted_consumers:
+                table.add_row(station.name, f"{amount:,}")
+
+            self.console.print(table)
+            self.console.print()
+        else:
+            self.console.print("[dim]No internal consumption (may be for external trade)[/dim]\n")
+
+        # Display which wares consume this (what it's used to produce)
         if deps["consumers"]:
-            self.console.print(f"[bold yellow]Used By:[/bold yellow]")
+            self.console.print(f"[bold yellow]Used To Produce:[/bold yellow]")
             for consumer in deps["consumers"]:
-                self.console.print(f"  - {consumer.ware.name}")
+                self.console.print(f"  - {consumer.ware.name} ({consumer.module_count} modules)")
             self.console.print()
 
         # Recommendations

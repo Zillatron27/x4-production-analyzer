@@ -17,12 +17,37 @@ class ProductionStats:
         self.total_capacity = 0
         self.modules: List[ProductionModule] = []
 
+        # Supply/demand tracking
+        self.total_production_output = 0  # Total production capacity across all modules
+        self.total_consumption_demand = 0  # Total consumption needed by other stations
+        self.consuming_stations: List[Tuple[Station, int]] = []  # (station, amount_needed)
+
     @property
     def capacity_percent(self) -> float:
-        """Calculate overall capacity utilization."""
+        """Calculate storage capacity utilization (legacy)."""
         if self.total_capacity == 0:
             return 0.0
         return (self.total_stock / self.total_capacity) * 100
+
+    @property
+    def production_utilization(self) -> float:
+        """Calculate production utilization (consumption / production)."""
+        if self.total_production_output == 0:
+            return 0.0
+        return min(100.0, (self.total_consumption_demand / self.total_production_output) * 100)
+
+    @property
+    def supply_status(self) -> str:
+        """Get supply status: Surplus, Balanced, or Shortage."""
+        if self.total_production_output == 0:
+            return "No Production"
+        ratio = self.total_consumption_demand / self.total_production_output
+        if ratio < 0.8:
+            return "Surplus"
+        elif ratio <= 1.2:
+            return "Balanced"
+        else:
+            return "Shortage"
 
     def add_module(self, module: ProductionModule):
         """Add a module to the stats."""
@@ -32,6 +57,12 @@ class ProductionStats:
         if module.output:
             self.total_stock += module.output.amount
             self.total_capacity += module.output.capacity
+            self.total_production_output += module.output.capacity  # Use capacity as production rate
+
+    def add_consumption(self, station: Station, amount: int):
+        """Add consumption demand from a station."""
+        self.total_consumption_demand += amount
+        self.consuming_stations.append((station, amount))
 
 
 class ProductionAnalyzer:
@@ -52,6 +83,16 @@ class ProductionAnalyzer:
                         self._production_stats[module.output_ware] = ProductionStats(module.output_ware)
 
                     self._production_stats[module.output_ware].add_module(module)
+
+        # Calculate consumption demands
+        for station in self.empire.stations:
+            for module in station.production_modules:
+                # Each module's inputs represent consumption demand
+                for input_res in module.inputs:
+                    if input_res.ware in self._production_stats:
+                        # Use input capacity as consumption rate
+                        consumption_amount = input_res.capacity if input_res.capacity > 0 else input_res.amount
+                        self._production_stats[input_res.ware].add_consumption(station, consumption_amount)
 
     def get_production_by_category(self) -> Dict[WareCategory, List[ProductionStats]]:
         """Group production stats by ware category."""
