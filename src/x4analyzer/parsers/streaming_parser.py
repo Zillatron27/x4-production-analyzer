@@ -10,7 +10,29 @@ from dataclasses import dataclass, field
 from ..models.entities import Station, ProductionModule, Ship, TradeResource, EmpireData
 from ..models.ware_database import get_ware
 
-logger = logging.getLogger("x4analyzer.parser")
+
+def setup_logger():
+    """Setup logger to write to project logs directory."""
+    log_dir = Path.home() / "x4-production-analyzer" / "logs"
+    log_dir.mkdir(parents=True, exist_ok=True)
+    log_file = log_dir / "x4_parser.log"
+
+    logger = logging.getLogger("x4analyzer.parser")
+    logger.setLevel(logging.DEBUG)
+
+    # Clear existing handlers to avoid duplicates
+    logger.handlers = []
+
+    # File handler
+    fh = logging.FileHandler(log_file, mode='w')
+    fh.setLevel(logging.DEBUG)
+    fh.setFormatter(logging.Formatter('%(asctime)s - %(levelname)s - %(message)s'))
+    logger.addHandler(fh)
+
+    return logger, log_file
+
+
+logger, LOG_FILE = setup_logger()
 
 
 @dataclass
@@ -170,6 +192,9 @@ class StreamingParser:
                         if ship_count <= 10 or ship_count % 100 == 0:
                             logger.debug(f"Found ship: {ship.name} ({comp_id}) class={comp_class}")
 
+                        if progress_callback and ship_count % 500 == 0:
+                            progress_callback(f"Found {station_count} stations, {ship_count} ships...", station_count)
+
             elif event == 'end':
                 # Process completed elements
 
@@ -250,7 +275,8 @@ class StreamingParser:
                 # Process ship cargo capacity
                 elif tag == 'cargo' and len(component_stack) > 0:
                     comp_info = component_stack[-1]
-                    if comp_info['class'] == 'ship':
+                    # X4 uses class="ship_s", "ship_m", "ship_l", "ship_xl"
+                    if comp_info['class'].startswith('ship_') or comp_info['class'] == 'ship':
                         ship = self._ships.get(comp_info['id'])
                         if ship:
                             ship.cargo_capacity = int(elem.get('max', 0))
@@ -262,6 +288,9 @@ class StreamingParser:
                     path.pop()
 
         logger.info(f"Streaming parse found {station_count} stations, {ship_count} ships")
+
+        if progress_callback:
+            progress_callback(f"Found {station_count} stations, {ship_count} ships", station_count)
 
     def _build_empire_data(self) -> EmpireData:
         """Convert parsed data to EmpireData model."""
