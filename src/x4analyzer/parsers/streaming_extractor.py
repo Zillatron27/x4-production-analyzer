@@ -74,6 +74,10 @@ class StreamingDataExtractor:
         in_production = False
         in_subordinates = False
 
+        # Track component nesting depth to avoid resetting station flags on nested components
+        component_depth = 0
+        station_component_depth = 0
+
         current_station = None
         current_station_elem = None
         station_production_modules = []
@@ -160,8 +164,10 @@ class StreamingDataExtractor:
 
                     # === STATION DETECTION ===
                     elif event == 'start' and elem.tag == 'component':
+                        component_depth += 1
                         if elem.get('class') == 'station':
                             in_station = True
+                            station_component_depth = component_depth
                             if elem.get('owner') == 'player':
                                 in_player_station = True
                                 current_station_elem = {
@@ -174,7 +180,7 @@ class StreamingDataExtractor:
                                 station_traders = 0
                                 station_miners = 0
                                 if stations_found < 2:
-                                    debug_log.write(f"\n*** PLAYER STATION FOUND: {current_station_elem['name']} ***\n")
+                                    debug_log.write(f"\n*** PLAYER STATION FOUND: {current_station_elem['name']} (depth={component_depth}) ***\n")
                                 if progress_callback and stations_found < 2:
                                     progress_callback(f"DEBUG: Entering station {current_station_elem['name']}", stations_found)
 
@@ -294,30 +300,35 @@ class StreamingDataExtractor:
                             elem.clear()
 
                     # === STATION COMPLETION ===
-                    elif event == 'end' and elem.tag == 'component' and in_station:
-                        # Closing tags don't have attributes, so check our state flags
-                        if in_player_station and current_station_elem:
-                            # Build Station object
-                            station = self._build_station(
-                                current_station_elem,
-                                station_production_modules,
-                                station_trade_data,
-                                station_traders,
-                                station_miners
-                            )
-                            stations.append(station)
-                            stations_found += 1
-
-                            if progress_callback:
-                                progress_callback(
-                                    f"Found station: {station.name}",
-                                    stations_found
+                    elif event == 'end' and elem.tag == 'component':
+                        # Only save station when we close the STATION component (not nested components)
+                        if in_station and component_depth == station_component_depth:
+                            if in_player_station and current_station_elem:
+                                # Build Station object
+                                station = self._build_station(
+                                    current_station_elem,
+                                    station_production_modules,
+                                    station_trade_data,
+                                    station_traders,
+                                    station_miners
                                 )
+                                stations.append(station)
+                                stations_found += 1
 
-                        # Reset state
-                        in_station = False
-                        in_player_station = False
-                        current_station_elem = None
+                                if progress_callback:
+                                    progress_callback(
+                                        f"Found station: {station.name}",
+                                        stations_found
+                                    )
+
+                            # Reset state only when exiting the station component
+                            in_station = False
+                            in_player_station = False
+                            current_station_elem = None
+                            station_component_depth = 0
+
+                        # Decrement component depth for all components
+                        component_depth -= 1
                         elem.clear()
 
                     # Clear other elements to free memory
