@@ -151,13 +151,13 @@ class StreamingParser:
                         if progress_callback and station_count % 5 == 0:
                             progress_callback(f"Found {station_count} stations...", station_count)
 
-                    # Found a ship - check class attribute OR macro containing 'ship'
+                    # Found a ship - X4 uses class="ship_s", "ship_m", "ship_l", "ship_xl"
                     comp_macro = elem.get('macro', '').lower()
-                    is_ship = (comp_class == 'ship' or
-                               comp_class == 'object' and 'ship' in comp_macro or
+                    is_ship = (comp_class.startswith('ship_') or
+                               comp_class == 'ship' or
                                'ship_' in comp_macro)
 
-                    if is_ship and comp_class != 'station':
+                    if is_ship and not comp_class.startswith('station'):
                         ship = ParsedShip(
                             ship_id=comp_id,
                             name=elem.get('name', f'Ship {comp_id}'),
@@ -166,7 +166,9 @@ class StreamingParser:
                         )
                         self._ships[comp_id] = ship
                         ship_count += 1
-                        logger.debug(f"Found ship: {ship.name} ({comp_id}) macro={ship.macro}")
+
+                        if ship_count <= 10 or ship_count % 100 == 0:
+                            logger.debug(f"Found ship: {ship.name} ({comp_id}) class={comp_class}")
 
             elif event == 'end':
                 # Process completed elements
@@ -343,12 +345,24 @@ class StreamingParser:
         purpose = ship.purpose.lower()
         macro = ship.macro.lower()
 
-        if 'trade' in purpose or 'trade' in macro:
+        # Check purpose first (most reliable)
+        if 'trade' in purpose:
             return 'trader'
-        elif 'mine' in purpose or 'mining' in macro:
+        elif 'mine' in purpose:
             return 'miner'
-        elif 'build' in purpose:
+        elif 'build' in purpose or 'moveto' in purpose:
             return 'builder'
-        elif 'fight' in purpose or 'combat' in macro:
+
+        # Check macro for ship role hints
+        if 'trans' in macro or 'freighter' in macro or 'hauler' in macro:
+            return 'trader'
+        elif 'miner' in macro or 'mining' in macro:
+            return 'miner'
+        elif 'builder' in macro or 'construct' in macro:
+            return 'builder'
+        elif 'fighter' in macro or 'corvette' in macro or 'frigate' in macro:
             return 'combat'
-        return 'unknown'
+        elif 'carrier' in macro or 'destroyer' in macro or 'battleship' in macro:
+            return 'combat'
+
+        return 'other'
