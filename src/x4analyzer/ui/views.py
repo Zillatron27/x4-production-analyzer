@@ -27,119 +27,73 @@ class ViewRenderer:
         self.console.print("[bold cyan]CAPACITY PLANNING[/bold cyan]\n")
 
         # Get user input
-        query = self.console.input("Enter ware name to analyze: ").strip()
+        query = self.console.input("Enter ware name to analyze (or press Enter for list): ").strip()
 
         if not query:
+            # Show the full list like search_production_view
+            self.search_production_view()
             return
 
+        # Try exact match first
         stats = self.analyzer.get_ware_stats(query)
 
-        if not stats:
+        if stats:
+            self._display_ware_details(stats)
+            return
+
+        # Try search
+        results = self.analyzer.search_production(query)
+
+        if not results:
             self.console.print(f"[red]No production found for '{query}'[/red]")
             self._wait_for_enter()
             return
 
-        # Display current production with supply/demand
-        self.console.print(f"\n[bold]Production: {stats.ware.name}[/bold]")
-        self.console.print(f"  Production modules: [green]{stats.module_count}[/green]")
-        self.console.print(f"  Current stock: {stats.total_stock:,}")
-        self.console.print(f"  Storage capacity: {stats.total_capacity:,}")
+        if len(results) == 1:
+            self._display_ware_details(results[0])
+            return
+
+        # Multiple results - show selection
+        self.console.print(f"\n[bold]Found {len(results)} matches for '{query}':[/bold]\n")
+
+        table = Table(show_header=True, box=None)
+        table.add_column("#", style="bold", justify="right", width=4)
+        table.add_column("Ware", style="cyan")
+        table.add_column("Category", style="yellow")
+        table.add_column("Modules", justify="right", style="green")
+        table.add_column("Status", justify="left")
+
+        for i, stat in enumerate(results, 1):
+            status = stat.supply_status
+            if status == "Shortage":
+                status_display = f"[red]{status}[/red]"
+            elif status == "Surplus":
+                status_display = f"[yellow]{status}[/yellow]"
+            elif status == "Balanced":
+                status_display = f"[green]{status}[/green]"
+            else:
+                status_display = f"[dim]{status}[/dim]"
+
+            table.add_row(
+                str(i),
+                stat.ware.name,
+                stat.ware.category.value,
+                str(stat.module_count),
+                status_display
+            )
+
+        self.console.print(table)
         self.console.print()
 
-        # Supply/Demand section
-        self.console.print("[bold yellow]Supply vs Demand:[/bold yellow]")
-        self.console.print(f"  Production output: {stats.total_production_output:,} (estimated capacity)")
-        self.console.print(f"  Consumption demand: {stats.total_consumption_demand:,} (from internal stations)")
+        choice = self.console.input("Enter number to view details: ").strip()
 
-        # Color-code supply status
-        status = stats.supply_status
-        if status == "Shortage":
-            self.console.print(f"  Supply status: [red]{status}[/red] ({stats.production_utilization:.0f}% demand/production)")
-        elif status == "Surplus":
-            self.console.print(f"  Supply status: [yellow]{status}[/yellow] ({stats.production_utilization:.0f}% demand/production)")
-        elif status == "Balanced":
-            self.console.print(f"  Supply status: [green]{status}[/green] ({stats.production_utilization:.0f}% demand/production)")
-        else:
-            self.console.print(f"  Supply status: [dim]{status}[/dim]")
-        self.console.print()
+        if choice and choice.isdigit():
+            num = int(choice)
+            if 1 <= num <= len(results):
+                self._display_ware_details(results[num - 1])
+                return
 
-        # Producing stations
-        if stats.producing_stations:
-            self.console.print("[bold yellow]Producing Stations:[/bold yellow]")
-            for station_name, module_count in sorted(stats.producing_stations.items(), key=lambda x: -x[1]):
-                self.console.print(f"  - {station_name}: [green]{module_count} modules[/green]")
-            self.console.print()
-
-        # Consuming stations
-        if stats.consuming_stations:
-            self.console.print("[bold yellow]Consuming Stations:[/bold yellow]")
-            for station_name, demand in sorted(stats.consuming_stations.items(), key=lambda x: -x[1]):
-                self.console.print(f"  - {station_name}: [cyan]{demand:,} demand[/cyan]")
-            self.console.print()
-
-        # Analyze dependencies
-        deps = self.analyzer.analyze_dependencies(query)
-
-        # Display input requirements
-        if deps["inputs"]:
-            self.console.print("[bold yellow]Input Requirements (for production):[/bold yellow]")
-            table = Table(show_header=True, box=None)
-            table.add_column("Input Ware", style="cyan")
-            table.add_column("Modules", justify="right", style="green")
-            table.add_column("Supply Status", justify="right")
-
-            for input_stats in deps["inputs"]:
-                status_color = "red" if input_stats.supply_status == "Shortage" else \
-                               "yellow" if input_stats.supply_status == "Surplus" else \
-                               "green" if input_stats.supply_status == "Balanced" else "dim"
-                table.add_row(
-                    input_stats.ware.name,
-                    str(input_stats.module_count),
-                    f"[{status_color}]{input_stats.supply_status}[/{status_color}]"
-                )
-
-            self.console.print(table)
-            self.console.print()
-
-            # Check for shortages in inputs
-            shortages = [s for s in deps["inputs"] if s.supply_status == "Shortage"]
-            if shortages:
-                self.console.print("[bold red]Input Shortages:[/bold red]")
-                for sh in shortages:
-                    self.console.print(
-                        f"  - {sh.ware.name}: [red]Demand at {sh.production_utilization:.0f}% of production[/red]"
-                    )
-                self.console.print()
-
-        # Display what this ware is used to produce
-        if deps["consumers"]:
-            # Deduplicate consumers
-            unique_consumers = {}
-            for consumer in deps["consumers"]:
-                if consumer.ware.ware_id not in unique_consumers:
-                    unique_consumers[consumer.ware.ware_id] = consumer
-
-            self.console.print(f"[bold yellow]Used To Produce:[/bold yellow]")
-            for consumer in unique_consumers.values():
-                self.console.print(f"  - {consumer.ware.name} ({consumer.module_count} modules)")
-            self.console.print()
-
-        # Recommendations
-        if stats.supply_status == "Shortage":
-            self.console.print("[bold red]RECOMMENDATION:[/bold red]")
-            shortage_percent = stats.production_utilization - 100
-            self.console.print(f"  Demand exceeds production by {shortage_percent:.0f}%")
-            # Estimate modules needed
-            if stats.module_count > 0:
-                modules_needed = int(stats.module_count * (shortage_percent / 100)) + 1
-                self.console.print(f"  Consider adding ~{modules_needed} more production modules")
-            self.console.print()
-        elif stats.supply_status == "Surplus" and stats.production_utilization < 50:
-            self.console.print("[bold yellow]NOTE:[/bold yellow]")
-            self.console.print(f"  Production significantly exceeds internal demand")
-            self.console.print(f"  Excess may be sold to NPC factions for profit")
-            self.console.print()
-
+        self.console.print("[red]Invalid selection[/red]")
         self._wait_for_enter()
 
     def station_view(self):
@@ -309,42 +263,240 @@ class ViewRenderer:
         self._wait_for_enter()
 
     def search_production_view(self):
-        """Search for specific production."""
+        """Search for specific production with numbered selection."""
         self.console.clear()
         self.console.print("[bold cyan]SEARCH PRODUCTION[/bold cyan]\n")
 
-        query = self.console.input("Enter search term: ").strip()
+        # Get all production stats grouped by category
+        from ..models.entities import WareCategory
+        by_category = self.analyzer.get_production_by_category()
 
-        if not query:
-            return
+        category_order = [
+            WareCategory.SHIP_COMPONENTS,
+            WareCategory.ADVANCED_MATERIALS,
+            WareCategory.INTERMEDIATE,
+            WareCategory.BASIC,
+            WareCategory.UNKNOWN
+        ]
 
-        results = self.analyzer.search_production(query)
+        # Build flat list for numbering
+        all_stats = []
+        for category in category_order:
+            if category in by_category:
+                all_stats.extend(by_category[category])
 
-        if not results:
-            self.console.print(f"[red]No results found for '{query}'[/red]")
+        if not all_stats:
+            self.console.print("[yellow]No production data available[/yellow]")
             self._wait_for_enter()
             return
 
-        self.console.print(f"\n[bold]Found {len(results)} result(s):[/bold]\n")
+        # Display numbered table grouped by category
+        self.console.print("[bold]Select a ware to analyze:[/bold]\n")
+
+        idx = 1
+        for category in category_order:
+            if category not in by_category or not by_category[category]:
+                continue
+
+            self.console.print(f"[yellow]{category.value}:[/yellow]")
+
+            table = Table(show_header=True, box=None, padding=(0, 1))
+            table.add_column("#", style="bold", justify="right", width=4)
+            table.add_column("Ware", style="cyan", min_width=20)
+            table.add_column("Modules", justify="right", style="green", width=8)
+            table.add_column("Stock", justify="right", width=10)
+            table.add_column("Status", justify="left", width=10)
+
+            for stats in by_category[category]:
+                # Color-code status
+                status = stats.supply_status
+                if status == "Shortage":
+                    status_display = f"[red]{status}[/red]"
+                elif status == "Surplus":
+                    status_display = f"[yellow]{status}[/yellow]"
+                elif status == "Balanced":
+                    status_display = f"[green]{status}[/green]"
+                else:
+                    status_display = f"[dim]{status}[/dim]"
+
+                table.add_row(
+                    str(idx),
+                    stats.ware.name,
+                    str(stats.module_count),
+                    f"{stats.total_stock:,}",
+                    status_display
+                )
+                idx += 1
+
+            self.console.print(table)
+            self.console.print()
+
+        # Also allow text search
+        self.console.print("[dim]Enter a number to select, or type a search term to filter[/dim]")
+        choice = self.console.input("Selection: ").strip()
+
+        if not choice:
+            return
+
+        # Check if it's a number
+        if choice.isdigit():
+            num = int(choice)
+            if 1 <= num <= len(all_stats):
+                self._display_ware_details(all_stats[num - 1])
+                return
+            else:
+                self.console.print(f"[red]Invalid selection. Enter 1-{len(all_stats)}[/red]")
+                self._wait_for_enter()
+                return
+
+        # Text search
+        results = self.analyzer.search_production(choice)
+
+        if not results:
+            self.console.print(f"[red]No results found for '{choice}'[/red]")
+            self._wait_for_enter()
+            return
+
+        if len(results) == 1:
+            # Single result - show details directly
+            self._display_ware_details(results[0])
+            return
+
+        # Multiple results - show selection
+        self.console.clear()
+        self.console.print(f"[bold]Found {len(results)} result(s) for '{choice}':[/bold]\n")
 
         table = Table(show_header=True, box=None)
+        table.add_column("#", style="bold", justify="right", width=4)
         table.add_column("Ware", style="cyan")
         table.add_column("Category", style="yellow")
         table.add_column("Modules", justify="right", style="green")
-        table.add_column("Stock", justify="right")
-        table.add_column("Capacity %", justify="right")
+        table.add_column("Status", justify="left")
 
-        for stats in results:
+        for i, stats in enumerate(results, 1):
+            status = stats.supply_status
+            if status == "Shortage":
+                status_display = f"[red]{status}[/red]"
+            elif status == "Surplus":
+                status_display = f"[yellow]{status}[/yellow]"
+            elif status == "Balanced":
+                status_display = f"[green]{status}[/green]"
+            else:
+                status_display = f"[dim]{status}[/dim]"
+
             table.add_row(
+                str(i),
                 stats.ware.name,
                 stats.ware.category.value,
                 str(stats.module_count),
-                f"{stats.total_stock:,}",
-                f"{stats.capacity_percent:.1f}%"
+                status_display
             )
 
         self.console.print(table)
         self.console.print()
+
+        choice2 = self.console.input("Enter number to view details (or press Enter to cancel): ").strip()
+
+        if choice2 and choice2.isdigit():
+            num = int(choice2)
+            if 1 <= num <= len(results):
+                self._display_ware_details(results[num - 1])
+                return
+
+    def _display_ware_details(self, stats: ProductionStats):
+        """Display detailed information about a ware's production."""
+        self.console.clear()
+        self.console.print(f"[bold cyan]Production: {stats.ware.name}[/bold cyan]")
+        self.console.print(f"Category: {stats.ware.category.value}\n")
+
+        # Basic stats
+        self.console.print(f"  Production modules: [green]{stats.module_count}[/green]")
+        self.console.print(f"  Current stock: {stats.total_stock:,}")
+        self.console.print(f"  Storage capacity: {stats.total_capacity:,}")
+        self.console.print()
+
+        # Supply/Demand section
+        self.console.print("[bold yellow]Supply vs Demand:[/bold yellow]")
+        self.console.print(f"  Production output: {stats.total_production_output:,} (estimated capacity)")
+        self.console.print(f"  Consumption demand: {stats.total_consumption_demand:,} (from internal stations)")
+
+        # Color-code supply status
+        status = stats.supply_status
+        if status == "Shortage":
+            self.console.print(f"  Supply status: [red]{status}[/red] ({stats.production_utilization:.0f}% demand/production)")
+        elif status == "Surplus":
+            self.console.print(f"  Supply status: [yellow]{status}[/yellow] ({stats.production_utilization:.0f}% demand/production)")
+        elif status == "Balanced":
+            self.console.print(f"  Supply status: [green]{status}[/green] ({stats.production_utilization:.0f}% demand/production)")
+        else:
+            self.console.print(f"  Supply status: [dim]{status}[/dim]")
+        self.console.print()
+
+        # Producing stations
+        if stats.producing_stations:
+            self.console.print("[bold yellow]Producing Stations:[/bold yellow]")
+            for station_name, module_count in sorted(stats.producing_stations.items(), key=lambda x: -x[1]):
+                self.console.print(f"  - {station_name}: [green]{module_count} modules[/green]")
+            self.console.print()
+
+        # Consuming stations
+        if stats.consuming_stations:
+            self.console.print("[bold yellow]Consuming Stations:[/bold yellow]")
+            for station_name, demand in sorted(stats.consuming_stations.items(), key=lambda x: -x[1]):
+                self.console.print(f"  - {station_name}: [cyan]{demand:,} demand[/cyan]")
+            self.console.print()
+
+        # Analyze dependencies
+        deps = self.analyzer.analyze_dependencies(stats.ware.ware_id)
+
+        # Display input requirements
+        if deps["inputs"]:
+            self.console.print("[bold yellow]Input Requirements (for production):[/bold yellow]")
+            table = Table(show_header=True, box=None)
+            table.add_column("Input Ware", style="cyan")
+            table.add_column("Modules", justify="right", style="green")
+            table.add_column("Supply Status", justify="right")
+
+            for input_stats in deps["inputs"]:
+                status_color = "red" if input_stats.supply_status == "Shortage" else \
+                               "yellow" if input_stats.supply_status == "Surplus" else \
+                               "green" if input_stats.supply_status == "Balanced" else "dim"
+                table.add_row(
+                    input_stats.ware.name,
+                    str(input_stats.module_count),
+                    f"[{status_color}]{input_stats.supply_status}[/{status_color}]"
+                )
+
+            self.console.print(table)
+            self.console.print()
+
+        # Display what this ware is used to produce
+        if deps["consumers"]:
+            unique_consumers = {}
+            for consumer in deps["consumers"]:
+                if consumer.ware.ware_id not in unique_consumers:
+                    unique_consumers[consumer.ware.ware_id] = consumer
+
+            self.console.print(f"[bold yellow]Used To Produce:[/bold yellow]")
+            for consumer in unique_consumers.values():
+                self.console.print(f"  - {consumer.ware.name} ({consumer.module_count} modules)")
+            self.console.print()
+
+        # Recommendations
+        if stats.supply_status == "Shortage":
+            self.console.print("[bold red]RECOMMENDATION:[/bold red]")
+            shortage_percent = stats.production_utilization - 100
+            self.console.print(f"  Demand exceeds production by {shortage_percent:.0f}%")
+            if stats.module_count > 0:
+                modules_needed = int(stats.module_count * (shortage_percent / 100)) + 1
+                self.console.print(f"  Consider adding ~{modules_needed} more production modules")
+            self.console.print()
+        elif stats.supply_status == "Surplus" and stats.production_utilization < 50:
+            self.console.print("[bold yellow]NOTE:[/bold yellow]")
+            self.console.print(f"  Production significantly exceeds internal demand")
+            self.console.print(f"  Excess may be sold to NPC factions for profit")
+            self.console.print()
+
         self._wait_for_enter()
 
     def export_report_view(self):
