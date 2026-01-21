@@ -4,9 +4,13 @@ import gzip
 import xml.etree.ElementTree as ET
 import time
 import random
+import logging
 from pathlib import Path
 from typing import Optional, Callable
 from rich.progress import Progress, SpinnerColumn, TextColumn, BarColumn
+
+# Get logger from data_extractor module
+logger = logging.getLogger("x4analyzer.parser")
 
 
 # Fun flavor text for loading sequence
@@ -54,7 +58,11 @@ class SaveFileParser:
             ET.ParseError: If XML is malformed
         """
         if not self.file_path.exists():
+            logger.error(f"Save file not found: {self.file_path}")
             raise FileNotFoundError(f"Save file not found: {self.file_path}")
+
+        logger.info(f"Parsing save file: {self.file_path}")
+        logger.info(f"File size: {self.file_path.stat().st_size / 1024 / 1024:.1f} MB")
 
         # Decompress
         if progress_callback:
@@ -63,8 +71,10 @@ class SaveFileParser:
         try:
             with gzip.open(self.file_path, 'rb') as f:
                 xml_content = f.read()
+            logger.info(f"Decompressed size: {len(xml_content) / 1024 / 1024:.1f} MB")
         except gzip.BadGzipFile:
             # Maybe it's not compressed, try reading as plain XML
+            logger.info("File not gzipped, reading as plain XML")
             if progress_callback:
                 progress_callback("File not compressed, reading as plain XML...")
             with open(self.file_path, 'rb') as f:
@@ -74,7 +84,9 @@ class SaveFileParser:
         if progress_callback:
             progress_callback("Parsing XML...")
 
+        logger.info("Parsing XML tree...")
         self.root = ET.fromstring(xml_content)
+        logger.info("XML parsing complete")
 
         if progress_callback:
             progress_callback("Parsing complete!")
