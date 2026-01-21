@@ -294,7 +294,8 @@ class StreamingDataExtractor:
                             elem.clear()
 
                     # === STATION COMPLETION ===
-                    elif event == 'end' and elem.tag == 'component' and elem.get('class') == 'station':
+                    elif event == 'end' and elem.tag == 'component' and in_station:
+                        # Closing tags don't have attributes, so check our state flags
                         if in_player_station and current_station_elem:
                             # Build Station object
                             station = self._build_station(
