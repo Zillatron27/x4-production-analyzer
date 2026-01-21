@@ -272,10 +272,10 @@ class ViewRenderer:
         by_category = self.analyzer.get_production_by_category()
 
         category_order = [
-            WareCategory.SHIP_COMPONENTS,
-            WareCategory.ADVANCED_MATERIALS,
-            WareCategory.INTERMEDIATE,
-            WareCategory.BASIC,
+            WareCategory.TIER_3,
+            WareCategory.TIER_2,
+            WareCategory.TIER_1,
+            WareCategory.RAW,
             WareCategory.UNKNOWN
         ]
 
@@ -417,8 +417,9 @@ class ViewRenderer:
 
         # Supply/Demand section
         self.console.print("[bold yellow]Supply vs Demand:[/bold yellow]")
-        self.console.print(f"  Production output: {stats.total_production_output:,} (estimated capacity)")
-        self.console.print(f"  Consumption demand: {stats.total_consumption_demand:,} (from internal stations)")
+        self.console.print(f"  Production capacity: {stats.total_production_output:,} (max output)")
+        self.console.print(f"  Requested stock: {stats.total_consumption_demand:,} (buy orders from stations)")
+        self.console.print(f"  [dim]Note: Requested stock = buffer amount stations want, not actual consumption rate[/dim]")
 
         # Color-code supply status
         status = stats.supply_status
@@ -439,11 +440,11 @@ class ViewRenderer:
                 self.console.print(f"  - {station_name}: [green]{module_count} modules[/green]")
             self.console.print()
 
-        # Consuming stations
+        # Stations requesting this ware
         if stats.consuming_stations:
-            self.console.print("[bold yellow]Consuming Stations:[/bold yellow]")
+            self.console.print("[bold yellow]Stations Requesting:[/bold yellow]")
             for station_name, demand in sorted(stats.consuming_stations.items(), key=lambda x: -x[1]):
-                self.console.print(f"  - {station_name}: [cyan]{demand:,} demand[/cyan]")
+                self.console.print(f"  - {station_name}: [cyan]{demand:,} requested[/cyan]")
             self.console.print()
 
         # Analyze dependencies
@@ -657,10 +658,10 @@ class ViewRenderer:
                 by_category = self.analyzer.get_production_by_category()
 
                 category_order = [
-                    WareCategory.SHIP_COMPONENTS,
-                    WareCategory.ADVANCED_MATERIALS,
-                    WareCategory.INTERMEDIATE,
-                    WareCategory.BASIC,
+                    WareCategory.TIER_3,
+                    WareCategory.TIER_2,
+                    WareCategory.TIER_1,
+                    WareCategory.RAW,
                     WareCategory.UNKNOWN
                 ]
 

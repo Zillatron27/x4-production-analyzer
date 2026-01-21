@@ -6,11 +6,11 @@ from enum import Enum
 
 
 class WareCategory(Enum):
-    """Production ware categories."""
-    SHIP_COMPONENTS = "Ship Components"
-    ADVANCED_MATERIALS = "Advanced Materials"
-    INTERMEDIATE = "Intermediate"
-    BASIC = "Basic"
+    """Production ware categories based on production tiers."""
+    RAW = "Raw Materials"
+    TIER_1 = "Tier 1 - Processed"
+    TIER_2 = "Tier 2 - Components"
+    TIER_3 = "Tier 3 - Advanced"
     UNKNOWN = "Unknown"
 
 
