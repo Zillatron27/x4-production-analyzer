@@ -8,8 +8,7 @@ from pathlib import Path
 src_path = Path(__file__).parent.parent / "src"
 sys.path.insert(0, str(src_path))
 
-from x4analyzer.parsers.save_parser import SaveFileParser
-from x4analyzer.parsers.data_extractor import DataExtractor
+from x4analyzer.parsers.streaming_parser import StreamingParser
 from x4analyzer.analyzers.production_analyzer import ProductionAnalyzer
 
 
@@ -17,18 +16,12 @@ def test_basic_parsing():
     """Test basic save file parsing."""
     print("Testing save file parsing...")
 
-    # Parse the test save
-    parser = SaveFileParser("test_save.xml.gz")
-    root = parser.parse()
+    # Parse the test save using streaming parser
+    parser = StreamingParser("test_save.xml.gz")
+    empire = parser.parse()
 
-    assert root is not None, "Failed to parse save file"
+    assert empire is not None, "Failed to parse save file"
     print("✓ Save file parsed successfully")
-
-    # Extract data
-    extractor = DataExtractor(root)
-    empire = extractor.extract_all()
-
-    assert empire is not None, "Failed to extract empire data"
     assert len(empire.stations) > 0, "No stations found"
     print(f"✓ Found {len(empire.stations)} stations")
 
@@ -61,10 +54,8 @@ def test_station_details():
     """Test station detail extraction."""
     print("\nTesting station details...")
 
-    parser = SaveFileParser("test_save.xml.gz")
-    root = parser.parse()
-    extractor = DataExtractor(root)
-    empire = extractor.extract_all()
+    parser = StreamingParser("test_save.xml.gz")
+    empire = parser.parse()
 
     for station in empire.stations:
         print(f"\nStation: {station.name}")
@@ -83,10 +74,8 @@ def test_capacity_planning():
     """Test capacity planning analysis."""
     print("\nTesting capacity planning...")
 
-    parser = SaveFileParser("test_save.xml.gz")
-    root = parser.parse()
-    extractor = DataExtractor(root)
-    empire = extractor.extract_all()
+    parser = StreamingParser("test_save.xml.gz")
+    empire = parser.parse()
     analyzer = ProductionAnalyzer(empire)
 
     # Test dependency analysis

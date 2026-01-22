@@ -17,16 +17,20 @@ class ProductionStats:
         self.total_capacity = 0
         self.modules: List[ProductionModule] = []
 
-        # Supply/Demand tracking
-        self.total_production_output = 0  # Sum of production capacity
-        self.total_consumption_demand = 0  # Sum of consumption from all stations
-        self.consuming_stations: Dict[str, int] = {}  # station_name -> demand amount
+        # Supply/Demand tracking (storage-based estimates)
+        self.total_production_output = 0  # Sum of production capacity (estimate)
+        self.total_consumption_demand = 0  # Sum of buy orders from all stations (estimate)
+        self.consuming_stations: Dict[str, int] = {}  # station_name -> demand amount (storage-based)
         self.producing_stations: Dict[str, int] = {}  # station_name -> module count
 
         # True production rates (from game data)
-        self.production_rate_per_hour: float = 0.0  # Units per hour
-        self.consumption_rate_per_hour: float = 0.0  # Units per hour
+        self.production_rate_per_hour: float = 0.0  # Total units/hour produced empire-wide
+        self.consumption_rate_per_hour: float = 0.0  # Total units/hour consumed empire-wide
         self.has_rate_data: bool = False  # Whether we have actual rate data
+
+        # Per-station rate data (populated when game data is loaded)
+        self.station_production_rates: Dict[str, float] = {}  # station_name -> units/hour produced
+        self.station_consumption_rates: Dict[str, float] = {}  # station_name -> units/hour consumed
 
     @property
     def capacity_percent(self) -> float:
@@ -118,6 +122,18 @@ class ProductionStats:
         if station_name not in self.consuming_stations:
             self.consuming_stations[station_name] = 0
         self.consuming_stations[station_name] += demand_amount
+
+    def get_station_production_rate(self, station_name: str) -> float:
+        """Get production rate for a specific station (units/hour)."""
+        return self.station_production_rates.get(station_name, 0.0)
+
+    def get_station_consumption_rate(self, station_name: str) -> float:
+        """Get consumption rate for a specific station (units/hour)."""
+        return self.station_consumption_rates.get(station_name, 0.0)
+
+    def get_station_net_rate(self, station_name: str) -> float:
+        """Get net production rate for a station (production - consumption)."""
+        return self.get_station_production_rate(station_name) - self.get_station_consumption_rate(station_name)
 
 
 class ProductionAnalyzer:
@@ -348,6 +364,11 @@ class ProductionAnalyzer:
         """
         Load production rate data from game files.
 
+        This calculates actual production and consumption rates based on:
+        - Production modules and their output rates from game data
+        - Input requirements for each production module
+        - Aggregated at the empire level per ware
+
         Args:
             wares_extractor: A WaresExtractor instance with loaded game data
 
@@ -359,23 +380,13 @@ class ProductionAnalyzer:
 
         try:
             game_wares = wares_extractor.extract()
-            loaded_count = 0
 
-            for stats in self._production_stats.values():
-                ware_id = stats.ware.ware_id.lower()
-                game_ware = game_wares.get(ware_id)
+            # Calculate all production and consumption rates
+            # This single pass handles both production output and input consumption
+            self._calculate_all_consumption_rates(game_wares)
 
-                if game_ware and game_ware.default_method:
-                    # Calculate total production rate (rate per module * module count)
-                    rate_per_module = game_ware.default_method.units_per_hour
-                    stats.production_rate_per_hour = rate_per_module * stats.module_count
-                    stats.has_rate_data = True
-                    loaded_count += 1
-
-                    # Calculate consumption rate for this ware
-                    # Sum up consumption from all modules that use this ware as input
-                    self._calculate_consumption_rate(stats, game_wares)
-
+            # Count how many wares got rate data
+            loaded_count = sum(1 for stats in self._production_stats.values() if stats.has_rate_data)
             return loaded_count > 0
 
         except Exception as e:
@@ -383,31 +394,191 @@ class ProductionAnalyzer:
             logging.getLogger("x4analyzer").warning(f"Failed to load game data: {e}")
             return False
 
-    def _calculate_consumption_rate(self, stats: ProductionStats, game_wares: dict):
-        """Calculate consumption rate for a ware based on what consumes it."""
-        total_consumption = 0.0
+    def _calculate_all_consumption_rates(self, game_wares: dict):
+        """
+        Calculate production and consumption rates for all wares.
 
-        # Find all modules that consume this ware
-        for other_stats in self._production_stats.values():
-            if other_stats.ware.ware_id == stats.ware.ware_id:
-                continue
+        For each production module in the empire:
+        - Calculate its output rate from game data
+        - Look up its input requirements from game data
+        - Track both empire-wide totals and per-station breakdowns
+        """
+        from ..models.ware_database import get_ware
 
-            # Check if this ware produces something that consumes our target ware
-            other_ware_id = other_stats.ware.ware_id.lower()
-            other_game_ware = game_wares.get(other_ware_id)
+        # Track rates per ware and per station
+        # Structure: ware_id -> {total, stations: {station_name -> rate}}
+        production_rates: Dict[str, Dict] = {}  # ware produced
+        consumption_rates: Dict[str, Dict] = {}  # ware consumed
 
-            if other_game_ware and other_game_ware.default_method:
-                for resource in other_game_ware.default_method.resources:
-                    if resource.ware_id.lower() == stats.ware.ware_id.lower():
-                        # This ware consumes our target
-                        consumption_per_module = other_game_ware.default_method.resource_per_hour(resource.ware_id)
-                        total_consumption += consumption_per_module * other_stats.module_count
-                        break
+        # Iterate through all production modules in the empire
+        for station in self.empire.stations:
+            for module in station.production_modules:
+                if not module.output_ware:
+                    continue
 
-        stats.consumption_rate_per_hour = total_consumption
+                # Get production data for what this module produces
+                produced_ware_id = module.output_ware.ware_id.lower()
+                game_ware = game_wares.get(produced_ware_id)
+
+                if not game_ware or not game_ware.default_method:
+                    continue
+
+                # Track production rate for output ware
+                output_rate = game_ware.default_method.units_per_hour
+                if produced_ware_id not in production_rates:
+                    production_rates[produced_ware_id] = {"total": 0.0, "stations": {}}
+                production_rates[produced_ware_id]["total"] += output_rate
+                if station.name not in production_rates[produced_ware_id]["stations"]:
+                    production_rates[produced_ware_id]["stations"][station.name] = 0.0
+                production_rates[produced_ware_id]["stations"][station.name] += output_rate
+
+                # Track consumption rate for each input ware
+                for resource in game_ware.default_method.resources:
+                    input_ware_id = resource.ware_id.lower()
+                    consumption_rate = game_ware.default_method.resource_per_hour(resource.ware_id)
+
+                    if input_ware_id not in consumption_rates:
+                        consumption_rates[input_ware_id] = {"total": 0.0, "stations": {}}
+                    consumption_rates[input_ware_id]["total"] += consumption_rate
+                    if station.name not in consumption_rates[input_ware_id]["stations"]:
+                        consumption_rates[input_ware_id]["stations"][station.name] = 0.0
+                    consumption_rates[input_ware_id]["stations"][station.name] += consumption_rate
+
+        # Apply rates to existing production stats
+        for stats in self._production_stats.values():
+            ware_id = stats.ware.ware_id.lower()
+
+            # Apply production rates
+            if ware_id in production_rates:
+                stats.production_rate_per_hour = production_rates[ware_id]["total"]
+                stats.station_production_rates = production_rates[ware_id]["stations"]
+                stats.has_rate_data = True
+
+            # Apply consumption rates
+            if ware_id in consumption_rates:
+                stats.consumption_rate_per_hour = consumption_rates[ware_id]["total"]
+                stats.station_consumption_rates = consumption_rates[ware_id]["stations"]
+                stats.has_rate_data = True
+
+        # Create stats for wares that are consumed but not produced
+        # (e.g., raw materials we buy from NPCs)
+        for ware_id, rates in consumption_rates.items():
+            # Check if we already have stats for this ware
+            found = False
+            for stats in self._production_stats.values():
+                if stats.ware.ware_id.lower() == ware_id:
+                    found = True
+                    break
+
+            if not found:
+                # Create new stats for consumed-only ware
+                ware = get_ware(ware_id)
+                new_stats = ProductionStats(ware)
+                new_stats.consumption_rate_per_hour = rates["total"]
+                new_stats.station_consumption_rates = rates["stations"]
+                new_stats.has_rate_data = True
+                self._production_stats[ware] = new_stats
 
     @property
     def has_rate_data(self) -> bool:
         """Check if any production stats have rate data loaded."""
         return any(stats.has_rate_data for stats in self._production_stats.values())
+
+    def get_station_rates(self, station_name: str) -> Dict[str, Dict[str, float]]:
+        """
+        Get all production and consumption rates for a specific station.
+
+        Returns:
+            Dict with 'production' and 'consumption' keys, each mapping
+            ware_name -> rate (units/hour)
+        """
+        production = {}
+        consumption = {}
+
+        for stats in self._production_stats.values():
+            prod_rate = stats.get_station_production_rate(station_name)
+            cons_rate = stats.get_station_consumption_rate(station_name)
+
+            if prod_rate > 0:
+                production[stats.ware.name] = prod_rate
+            if cons_rate > 0:
+                consumption[stats.ware.name] = cons_rate
+
+        return {
+            "production": production,
+            "consumption": consumption
+        }
+
+    def get_station_summary(self, station: Station) -> Dict:
+        """
+        Get a comprehensive rate summary for a station.
+
+        Returns dict with:
+        - produced_wares: List of {ware, rate, modules} for each produced ware
+        - consumed_wares: List of {ware, rate} for each consumed ware
+        - net_rates: List of {ware, net_rate} where net_rate = production - consumption
+        """
+        from ..models.ware_database import get_ware
+
+        produced = []
+        consumed = []
+        net_rates = {}
+
+        # Get production from this station's modules
+        for module in station.production_modules:
+            if not module.output_ware:
+                continue
+
+            ware_name = module.output_ware.name
+            stats = self._production_stats.get(module.output_ware)
+            if stats and stats.has_rate_data:
+                rate = stats.get_station_production_rate(station.name)
+                # Find existing entry or create new
+                existing = next((p for p in produced if p["ware"] == ware_name), None)
+                if existing:
+                    existing["modules"] += 1
+                else:
+                    produced.append({
+                        "ware": ware_name,
+                        "ware_id": module.output_ware.ware_id,
+                        "rate": rate,
+                        "modules": 1
+                    })
+
+                # Track net rate
+                if ware_name not in net_rates:
+                    net_rates[ware_name] = {"produced": 0, "consumed": 0}
+                net_rates[ware_name]["produced"] = rate
+
+        # Get consumption at this station
+        for stats in self._production_stats.values():
+            cons_rate = stats.get_station_consumption_rate(station.name)
+            if cons_rate > 0:
+                consumed.append({
+                    "ware": stats.ware.name,
+                    "ware_id": stats.ware.ware_id,
+                    "rate": cons_rate
+                })
+
+                # Track net rate
+                if stats.ware.name not in net_rates:
+                    net_rates[stats.ware.name] = {"produced": 0, "consumed": 0}
+                net_rates[stats.ware.name]["consumed"] = cons_rate
+
+        # Calculate net rates
+        net_list = []
+        for ware_name, rates in net_rates.items():
+            net = rates["produced"] - rates["consumed"]
+            net_list.append({
+                "ware": ware_name,
+                "net_rate": net,
+                "production": rates["produced"],
+                "consumption": rates["consumed"]
+            })
+
+        return {
+            "produced_wares": sorted(produced, key=lambda x: x["rate"], reverse=True),
+            "consumed_wares": sorted(consumed, key=lambda x: x["rate"], reverse=True),
+            "net_rates": sorted(net_list, key=lambda x: x["net_rate"])
+        }
 

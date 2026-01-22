@@ -4,7 +4,7 @@ import gzip
 import logging
 from pathlib import Path
 from typing import Optional, Callable, Dict, List, Any
-from xml.etree.ElementTree import iterparse
+from lxml.etree import iterparse
 from dataclasses import dataclass, field
 
 from ..models.entities import Station, ProductionModule, Ship, TradeResource, EmpireData
@@ -369,8 +369,10 @@ class StreamingParser:
                         if ship:
                             ship.cargo_capacity = int(elem.get('max', 0))
 
-                # Clear element to free memory
+                # Clear element and remove from parent to free memory
                 elem.clear()
+                while elem.getprevious() is not None:
+                    del elem.getparent()[0]
 
                 if path:
                     path.pop()

@@ -25,127 +25,202 @@ class ViewRenderer:
         self.save_file_path = save_file_path
 
     def capacity_planning_view(self):
-        """Display capacity planning analysis."""
-        self.console.clear()
-        self.console.print("[bold cyan]CAPACITY PLANNING[/bold cyan]\n")
+        """Display capacity planning analysis with ware list."""
+        while True:
+            self.console.clear()
+            self.console.print("[bold cyan]CAPACITY PLANNING[/bold cyan]\n")
 
-        # Get user input
-        query = self.console.input("Enter ware name to analyze (or press Enter for list): ").strip()
+            # Get all production stats grouped by category
+            from ..models.entities import WareCategory
+            by_category = self.analyzer.get_production_by_category()
 
-        if not query:
-            # Show the full list like search_production_view
-            self.search_production_view()
-            return
+            category_order = [
+                WareCategory.TIER_3,
+                WareCategory.TIER_2,
+                WareCategory.TIER_1,
+                WareCategory.RAW,
+                WareCategory.UNKNOWN
+            ]
 
-        # Try exact match first
-        stats = self.analyzer.get_ware_stats(query)
+            # Build flat list for numbering
+            all_stats = []
+            for category in category_order:
+                if category in by_category:
+                    all_stats.extend(by_category[category])
 
-        if stats:
-            self._display_ware_details(stats)
-            return
-
-        # Try search
-        results = self.analyzer.search_production(query)
-
-        if not results:
-            self.console.print(f"[red]No production found for '{query}'[/red]")
-            self._wait_for_enter()
-            return
-
-        if len(results) == 1:
-            self._display_ware_details(results[0])
-            return
-
-        # Multiple results - show selection
-        self.console.print(f"\n[bold]Found {len(results)} matches for '{query}':[/bold]\n")
-
-        table = Table(show_header=True, box=None)
-        table.add_column("#", style="bold", justify="right", width=4)
-        table.add_column("Ware", style="cyan")
-        table.add_column("Category", style="yellow")
-        table.add_column("Modules", justify="right", style="green")
-        table.add_column("Status", justify="left")
-
-        for i, stat in enumerate(results, 1):
-            status = stat.supply_status
-            if status == "Shortage":
-                status_display = f"[red]{status}[/red]"
-            elif status == "Surplus":
-                status_display = f"[yellow]{status}[/yellow]"
-            elif status == "Balanced":
-                status_display = f"[green]{status}[/green]"
-            else:
-                status_display = f"[dim]{status}[/dim]"
-
-            table.add_row(
-                str(i),
-                stat.ware.name,
-                stat.ware.category.value,
-                str(stat.module_count),
-                status_display
-            )
-
-        self.console.print(table)
-        self.console.print()
-
-        choice = self.console.input("Enter number to view details: ").strip()
-
-        if choice and choice.isdigit():
-            num = int(choice)
-            if 1 <= num <= len(results):
-                self._display_ware_details(results[num - 1])
+            if not all_stats:
+                self.console.print("[yellow]No production data available[/yellow]")
+                self._wait_for_enter()
                 return
 
-        self.console.print("[red]Invalid selection[/red]")
-        self._wait_for_enter()
+            # Check if we have rate data
+            has_rates = self.analyzer.has_rate_data
+
+            # Display numbered table grouped by category
+            self.console.print("[bold]Select a ware to analyze:[/bold]")
+            if has_rates:
+                self.console.print("[dim]Showing actual production/consumption rates from game data[/dim]\n")
+            else:
+                self.console.print("[dim]Game data not loaded - showing storage-based estimates[/dim]\n")
+
+            idx = 1
+            for category in category_order:
+                if category not in by_category or not by_category[category]:
+                    continue
+
+                self.console.print(f"[yellow]{category.value}:[/yellow]")
+
+                table = Table(show_header=True, box=None, padding=(0, 1))
+                table.add_column("#", style="bold", justify="right", width=4)
+                table.add_column("Ware", style="cyan", min_width=20)
+                table.add_column("Modules", justify="right", style="green", width=8)
+                if has_rates:
+                    table.add_column("Prod/hr", justify="right", width=10)
+                    table.add_column("Cons/hr", justify="right", width=10)
+                    table.add_column("Net/hr", justify="right", width=10)
+                else:
+                    table.add_column("Stock", justify="right", width=10)
+                table.add_column("Status", justify="left", width=10)
+
+                for stats in by_category[category]:
+                    # Color-code status
+                    status = stats.supply_status
+                    if status == "Shortage":
+                        status_display = f"[red]{status}[/red]"
+                    elif status == "Surplus":
+                        status_display = f"[green]{status}[/green]"
+                    elif status == "Balanced":
+                        status_display = f"[yellow]{status}[/yellow]"
+                    else:
+                        status_display = f"[dim]{status}[/dim]"
+
+                    if has_rates:
+                        balance = stats.rate_balance
+                        if balance > 0:
+                            balance_display = f"[green]+{balance:,.0f}[/green]"
+                        elif balance < 0:
+                            balance_display = f"[red]{balance:,.0f}[/red]"
+                        else:
+                            balance_display = "[dim]0[/dim]"
+
+                        table.add_row(
+                            str(idx),
+                            stats.ware.name,
+                            str(stats.module_count),
+                            f"{stats.production_rate_per_hour:,.0f}",
+                            f"{stats.consumption_rate_per_hour:,.0f}",
+                            balance_display,
+                            status_display
+                        )
+                    else:
+                        table.add_row(
+                            str(idx),
+                            stats.ware.name,
+                            str(stats.module_count),
+                            f"{stats.total_stock:,}",
+                            status_display
+                        )
+                    idx += 1
+
+                self.console.print(table)
+                self.console.print()
+
+            # Options
+            self.console.print("[dim]Enter number to select, search term to filter, or B to go back[/dim]")
+            choice = self.console.input("Selection: ").strip()
+
+            if not choice or choice.lower() == 'b':
+                return
+
+            # Check if it's a number
+            if choice.isdigit():
+                num = int(choice)
+                if 1 <= num <= len(all_stats):
+                    self._display_ware_details(all_stats[num - 1])
+                    # Loop back to this menu after viewing details
+                    continue
+                else:
+                    self.console.print(f"[red]Invalid selection. Enter 1-{len(all_stats)}[/red]")
+                    self._wait_for_enter()
+                    continue
+
+            # Text search
+            results = self.analyzer.search_production(choice)
+
+            if not results:
+                self.console.print(f"[red]No results found for '{choice}'[/red]")
+                self._wait_for_enter()
+                continue
+
+            if len(results) == 1:
+                self._display_ware_details(results[0])
+                continue
+
+            # Multiple results - show filtered selection
+            selected = self._display_search_results(results, choice)
+            if selected:
+                self._display_ware_details(selected)
+            # Loop back to main list
 
     def station_view(self):
         """Display station details."""
-        self.console.clear()
-        self.console.print("[bold cyan]STATION VIEW[/bold cyan]\n")
+        while True:
+            self.console.clear()
+            self.console.print("[bold cyan]STATION VIEW[/bold cyan]\n")
 
-        # Sort stations by sector, then by name
-        sorted_stations = sorted(self.empire.stations, key=lambda s: (s.sector, s.name))
+            # Sort stations by sector, then by name
+            sorted_stations = sorted(self.empire.stations, key=lambda s: (s.sector, s.name))
 
-        # List all stations grouped by sector
-        self.console.print("[bold]Your Stations:[/bold]")
-        current_sector = None
-        for i, station in enumerate(sorted_stations, 1):
-            # Print sector header when it changes
-            if station.sector != current_sector:
-                if current_sector is not None:
-                    self.console.print()  # Blank line between sectors
-                self.console.print(f"[yellow]{station.sector}:[/yellow]")
-                current_sector = station.sector
+            # List all stations grouped by sector
+            self.console.print("[bold]Your Stations:[/bold]")
+            current_sector = None
+            for i, station in enumerate(sorted_stations, 1):
+                # Print sector header when it changes
+                if station.sector != current_sector:
+                    if current_sector is not None:
+                        self.console.print()  # Blank line between sectors
+                    self.console.print(f"[yellow]{station.sector}:[/yellow]")
+                    current_sector = station.sector
 
-            products = len(station.unique_products)
-            modules = len(station.production_modules)
-            self.console.print(
-                f"  [{i}] {station.name} - "
-                f"[green]{modules} modules[/green], "
-                f"[yellow]{products} products[/yellow]"
-            )
+                products = len(station.unique_products)
+                modules = len(station.production_modules)
+                self.console.print(
+                    f"  [{i}] {station.name} - "
+                    f"[green]{modules} modules[/green], "
+                    f"[yellow]{products} products[/yellow]"
+                )
 
-        self.console.print()
-        choice = self.console.input("Enter station number (or press Enter to cancel): ").strip()
+            self.console.print()
+            self.console.print("[dim]Enter station number, or B to go back[/dim]")
+            choice = self.console.input("Selection: ").strip()
 
-        if not choice or not choice.isdigit():
-            return
+            if not choice or choice.lower() == 'b':
+                return
 
-        idx = int(choice) - 1
-        if idx < 0 or idx >= len(sorted_stations):
-            self.console.print("[red]Invalid selection[/red]")
-            self._wait_for_enter()
-            return
+            if not choice.isdigit():
+                self.console.print("[red]Invalid selection[/red]")
+                self._wait_for_enter()
+                continue
 
-        self._display_station_details(sorted_stations[idx])
+            idx = int(choice) - 1
+            if idx < 0 or idx >= len(sorted_stations):
+                self.console.print("[red]Invalid selection[/red]")
+                self._wait_for_enter()
+                continue
+
+            self._display_station_details(sorted_stations[idx])
+            # Loop back to station list after viewing details
 
     def _display_station_details(self, station: Station):
         """Display detailed information about a station."""
         self.console.clear()
         self.console.print(f"[bold cyan]{station.name}[/bold cyan]")
         self.console.print(f"Sector: {station.sector}")
+        self.console.print(f"Type: {station.station_type.title()}")
         self.console.print(f"Total Modules: {len(station.production_modules)}\n")
+
+        # Check if we have rate data
+        has_rates = self.analyzer.has_rate_data
 
         # Production table
         if station.production_modules:
@@ -155,6 +230,8 @@ class ViewRenderer:
             table.add_column("Modules", justify="right", style="green")
             table.add_column("Stock", justify="right")
             table.add_column("Capacity", justify="right")
+            if has_rates:
+                table.add_column("Rate/hr", justify="right", style="yellow")
 
             # Group by product
             products = {}
@@ -168,15 +245,91 @@ class ViewRenderer:
                         products[module.output_ware]["capacity"] += module.output.capacity
 
             for ware, data in products.items():
-                table.add_row(
+                row = [
                     ware.name,
                     str(data["count"]),
                     f"{data['stock']:,}",
                     f"{data['capacity']:,}"
-                )
+                ]
+                if has_rates:
+                    stats = self.analyzer.get_ware_stats(ware.ware_id)
+                    if stats:
+                        rate = stats.get_station_production_rate(station.name)
+                        row.append(f"{rate:,.0f}")
+                    else:
+                        row.append("-")
+                table.add_row(*row)
 
             self.console.print(table)
             self.console.print()
+
+        # Consumption table (inputs this station needs)
+        if has_rates:
+            station_rates = self.analyzer.get_station_rates(station.name)
+            consumption = station_rates.get("consumption", {})
+
+            if consumption:
+                self.console.print("[bold]Consumption (inputs needed):[/bold]")
+                table = Table(show_header=True, box=None)
+                table.add_column("Input Ware", style="cyan")
+                table.add_column("Rate/hr", justify="right", style="yellow")
+                table.add_column("Empire Status", justify="right")
+
+                for ware_name, rate in sorted(consumption.items(), key=lambda x: -x[1]):
+                    # Get empire-wide status for this ware
+                    stats = None
+                    for s in self.analyzer.get_all_production_stats():
+                        if s.ware.name == ware_name:
+                            stats = s
+                            break
+
+                    status = "-"
+                    if stats:
+                        status_text = stats.supply_status
+                        if status_text == "Shortage":
+                            status = f"[red]{status_text}[/red]"
+                        elif status_text == "Surplus":
+                            status = f"[green]{status_text}[/green]"
+                        elif status_text == "Balanced":
+                            status = f"[yellow]{status_text}[/yellow]"
+                        else:
+                            status = f"[dim]{status_text}[/dim]"
+
+                    table.add_row(ware_name, f"{rate:,.0f}", status)
+
+                self.console.print(table)
+                self.console.print()
+
+        # Net balance for this station (if rate data available)
+        if has_rates:
+            summary = self.analyzer.get_station_summary(station)
+            net_rates = summary.get("net_rates", [])
+
+            if net_rates:
+                # Show wares that are net negative (station consumes more than produces)
+                deficits = [n for n in net_rates if n["net_rate"] < 0]
+                surpluses = [n for n in net_rates if n["net_rate"] > 0]
+
+                if deficits:
+                    self.console.print("[bold yellow]Net Deficits (needs import):[/bold yellow]")
+                    for item in deficits[:5]:  # Top 5
+                        self.console.print(
+                            f"  {item['ware']}: [red]{item['net_rate']:+,.0f}/hr[/red] "
+                            f"(consumes {item['consumption']:,.0f}, produces {item['production']:,.0f})"
+                        )
+                    if len(deficits) > 5:
+                        self.console.print(f"  [dim]...and {len(deficits) - 5} more[/dim]")
+                    self.console.print()
+
+                if surpluses:
+                    self.console.print("[bold green]Net Surplus (for export/storage):[/bold green]")
+                    for item in surpluses[:5]:  # Top 5
+                        self.console.print(
+                            f"  {item['ware']}: [green]{item['net_rate']:+,.0f}/hr[/green]"
+                        )
+                    if len(surpluses) > 5:
+                        self.console.print(f"  [dim]...and {len(surpluses) - 5} more[/dim]")
+                    self.console.print()
 
         # Ships
         if station.assigned_ships:
@@ -305,108 +458,14 @@ class ViewRenderer:
         self._wait_for_enter()
 
     def search_production_view(self):
-        """Search for specific production with numbered selection."""
+        """Search for specific production - delegates to capacity planning view."""
+        # Both views now show the same ware list with search capability
+        self.capacity_planning_view()
+
+    def _display_search_results(self, results, query: str) -> Optional[ProductionStats]:
+        """Display search results and return selected stats or None."""
         self.console.clear()
-        self.console.print("[bold cyan]SEARCH PRODUCTION[/bold cyan]\n")
-
-        # Get all production stats grouped by category
-        from ..models.entities import WareCategory
-        by_category = self.analyzer.get_production_by_category()
-
-        category_order = [
-            WareCategory.TIER_3,
-            WareCategory.TIER_2,
-            WareCategory.TIER_1,
-            WareCategory.RAW,
-            WareCategory.UNKNOWN
-        ]
-
-        # Build flat list for numbering
-        all_stats = []
-        for category in category_order:
-            if category in by_category:
-                all_stats.extend(by_category[category])
-
-        if not all_stats:
-            self.console.print("[yellow]No production data available[/yellow]")
-            self._wait_for_enter()
-            return
-
-        # Display numbered table grouped by category
-        self.console.print("[bold]Select a ware to analyze:[/bold]\n")
-
-        idx = 1
-        for category in category_order:
-            if category not in by_category or not by_category[category]:
-                continue
-
-            self.console.print(f"[yellow]{category.value}:[/yellow]")
-
-            table = Table(show_header=True, box=None, padding=(0, 1))
-            table.add_column("#", style="bold", justify="right", width=4)
-            table.add_column("Ware", style="cyan", min_width=20)
-            table.add_column("Modules", justify="right", style="green", width=8)
-            table.add_column("Stock", justify="right", width=10)
-            table.add_column("Status", justify="left", width=10)
-
-            for stats in by_category[category]:
-                # Color-code status
-                status = stats.supply_status
-                if status == "Shortage":
-                    status_display = f"[red]{status}[/red]"
-                elif status == "Surplus":
-                    status_display = f"[yellow]{status}[/yellow]"
-                elif status == "Balanced":
-                    status_display = f"[green]{status}[/green]"
-                else:
-                    status_display = f"[dim]{status}[/dim]"
-
-                table.add_row(
-                    str(idx),
-                    stats.ware.name,
-                    str(stats.module_count),
-                    f"{stats.total_stock:,}",
-                    status_display
-                )
-                idx += 1
-
-            self.console.print(table)
-            self.console.print()
-
-        # Also allow text search
-        self.console.print("[dim]Enter a number to select, or type a search term to filter[/dim]")
-        choice = self.console.input("Selection: ").strip()
-
-        if not choice:
-            return
-
-        # Check if it's a number
-        if choice.isdigit():
-            num = int(choice)
-            if 1 <= num <= len(all_stats):
-                self._display_ware_details(all_stats[num - 1])
-                return
-            else:
-                self.console.print(f"[red]Invalid selection. Enter 1-{len(all_stats)}[/red]")
-                self._wait_for_enter()
-                return
-
-        # Text search
-        results = self.analyzer.search_production(choice)
-
-        if not results:
-            self.console.print(f"[red]No results found for '{choice}'[/red]")
-            self._wait_for_enter()
-            return
-
-        if len(results) == 1:
-            # Single result - show details directly
-            self._display_ware_details(results[0])
-            return
-
-        # Multiple results - show selection
-        self.console.clear()
-        self.console.print(f"[bold]Found {len(results)} result(s) for '{choice}':[/bold]\n")
+        self.console.print(f"[bold]Found {len(results)} result(s) for '{query}':[/bold]\n")
 
         table = Table(show_header=True, box=None)
         table.add_column("#", style="bold", justify="right", width=4)
@@ -420,9 +479,9 @@ class ViewRenderer:
             if status == "Shortage":
                 status_display = f"[red]{status}[/red]"
             elif status == "Surplus":
-                status_display = f"[yellow]{status}[/yellow]"
-            elif status == "Balanced":
                 status_display = f"[green]{status}[/green]"
+            elif status == "Balanced":
+                status_display = f"[yellow]{status}[/yellow]"
             else:
                 status_display = f"[dim]{status}[/dim]"
 
@@ -437,13 +496,14 @@ class ViewRenderer:
         self.console.print(table)
         self.console.print()
 
-        choice2 = self.console.input("Enter number to view details (or press Enter to cancel): ").strip()
+        choice = self.console.input("Enter number to view details (or press Enter to go back): ").strip()
 
-        if choice2 and choice2.isdigit():
-            num = int(choice2)
+        if choice and choice.isdigit():
+            num = int(choice)
             if 1 <= num <= len(results):
-                self._display_ware_details(results[num - 1])
-                return
+                return results[num - 1]
+
+        return None
 
     def _display_ware_details(self, stats: ProductionStats):
         """Display detailed information about a ware's production."""
@@ -457,20 +517,37 @@ class ViewRenderer:
         self.console.print(f"  Storage capacity: {stats.total_capacity:,}")
         self.console.print()
 
-        # Supply/Demand section
-        self.console.print("[bold yellow]Supply vs Demand:[/bold yellow]")
-        self.console.print(f"  Production capacity: {stats.total_production_output:,} (max output)")
-        self.console.print(f"  Requested stock: {stats.total_consumption_demand:,} (buy orders from stations)")
-        self.console.print(f"  [dim]Note: Requested stock = buffer amount stations want, not actual consumption rate[/dim]")
+        # Production/Consumption rates (if available)
+        if stats.has_rate_data:
+            self.console.print("[bold yellow]Production & Consumption Rates:[/bold yellow]")
+            self.console.print(f"  Production: [green]{stats.production_rate_per_hour:,.0f}[/green] units/hour")
+            self.console.print(f"  Consumption: [cyan]{stats.consumption_rate_per_hour:,.0f}[/cyan] units/hour")
+
+            # Net balance
+            balance = stats.rate_balance
+            if balance > 0:
+                self.console.print(f"  Net balance: [green]+{balance:,.0f}[/green] units/hour (surplus)")
+            elif balance < 0:
+                self.console.print(f"  Net balance: [red]{balance:,.0f}[/red] units/hour (deficit)")
+            else:
+                self.console.print(f"  Net balance: [yellow]0[/yellow] units/hour (balanced)")
+            self.console.print()
+
+        # Supply/Demand section (storage-based estimates)
+        self.console.print("[bold yellow]Storage-Based Estimates:[/bold yellow]")
+        self.console.print(f"  Production capacity: {stats.total_production_output:,} (storage estimate)")
+        self.console.print(f"  Requested stock: {stats.total_consumption_demand:,} (buy orders)")
+        if not stats.has_rate_data:
+            self.console.print(f"  [dim]Note: Game data not loaded - using storage estimates[/dim]")
 
         # Color-code supply status
         status = stats.supply_status
         if status == "Shortage":
-            self.console.print(f"  Supply status: [red]{status}[/red] ({stats.production_utilization:.0f}% demand/production)")
+            self.console.print(f"  Supply status: [red]{status}[/red]")
         elif status == "Surplus":
-            self.console.print(f"  Supply status: [yellow]{status}[/yellow] ({stats.production_utilization:.0f}% demand/production)")
+            self.console.print(f"  Supply status: [green]{status}[/green]")
         elif status == "Balanced":
-            self.console.print(f"  Supply status: [green]{status}[/green] ({stats.production_utilization:.0f}% demand/production)")
+            self.console.print(f"  Supply status: [yellow]{status}[/yellow]")
         else:
             self.console.print(f"  Supply status: [dim]{status}[/dim]")
         self.console.print()
@@ -479,12 +556,22 @@ class ViewRenderer:
         if stats.producing_stations:
             self.console.print("[bold yellow]Producing Stations:[/bold yellow]")
             for station_name, module_count in sorted(stats.producing_stations.items(), key=lambda x: -x[1]):
-                self.console.print(f"  - {station_name}: [green]{module_count} modules[/green]")
+                rate_str = ""
+                if stats.has_rate_data and station_name in stats.station_production_rates:
+                    rate = stats.station_production_rates[station_name]
+                    rate_str = f" ([yellow]{rate:,.0f}/hr[/yellow])"
+                self.console.print(f"  - {station_name}: [green]{module_count} modules[/green]{rate_str}")
             self.console.print()
 
-        # Stations requesting this ware
-        if stats.consuming_stations:
-            self.console.print("[bold yellow]Stations Requesting:[/bold yellow]")
+        # Stations consuming this ware
+        if stats.station_consumption_rates:
+            self.console.print("[bold yellow]Consuming Stations:[/bold yellow]")
+            for station_name, rate in sorted(stats.station_consumption_rates.items(), key=lambda x: -x[1]):
+                self.console.print(f"  - {station_name}: [cyan]{rate:,.0f}/hr[/cyan]")
+            self.console.print()
+        elif stats.consuming_stations:
+            # Fall back to storage-based if no rate data
+            self.console.print("[bold yellow]Stations Requesting (storage-based):[/bold yellow]")
             for station_name, demand in sorted(stats.consuming_stations.items(), key=lambda x: -x[1]):
                 self.console.print(f"  - {station_name}: [cyan]{demand:,} requested[/cyan]")
             self.console.print()
@@ -577,28 +664,46 @@ class ViewRenderer:
         if not filename.endswith(".csv"):
             filename += ".csv"
 
+        has_rates = self.analyzer.has_rate_data
+
         try:
             with open(filename, 'w', newline='') as f:
                 writer = csv.writer(f)
-                writer.writerow([
-                    "Ware", "Category", "Modules", "Stock", "Capacity",
-                    "Stock %", "Production Output", "Consumption Demand",
-                    "Supply/Demand %", "Supply Status"
+
+                # Header with rate columns if available
+                header = [
+                    "Ware", "Category", "Modules", "Stock", "Capacity", "Stock %"
+                ]
+                if has_rates:
+                    header.extend([
+                        "Production/hr", "Consumption/hr", "Net Rate/hr"
+                    ])
+                header.extend([
+                    "Storage Estimate", "Storage Demand", "Supply Status"
                 ])
+                writer.writerow(header)
 
                 for stats in self.analyzer.get_all_production_stats():
-                    writer.writerow([
+                    row = [
                         stats.ware.name,
                         stats.ware.category.value,
                         stats.module_count,
                         stats.total_stock,
                         stats.total_capacity,
-                        f"{stats.capacity_percent:.2f}",
+                        f"{stats.capacity_percent:.2f}"
+                    ]
+                    if has_rates:
+                        row.extend([
+                            f"{stats.production_rate_per_hour:.0f}",
+                            f"{stats.consumption_rate_per_hour:.0f}",
+                            f"{stats.rate_balance:.0f}"
+                        ])
+                    row.extend([
                         stats.total_production_output,
                         stats.total_consumption_demand,
-                        f"{stats.production_utilization:.2f}",
                         stats.supply_status
                     ])
+                    writer.writerow(row)
 
             self.console.print(f"[green]Report exported to {filename}[/green]")
         except Exception as e:
@@ -632,7 +737,7 @@ class ViewRenderer:
             }
 
             for stats in self.analyzer.get_all_production_stats():
-                data["production"].append({
+                ware_data = {
                     "ware_id": stats.ware.ware_id,
                     "ware_name": stats.ware.name,
                     "category": stats.ware.category.value,
@@ -640,13 +745,25 @@ class ViewRenderer:
                     "total_stock": stats.total_stock,
                     "total_capacity": stats.total_capacity,
                     "capacity_percent": round(stats.capacity_percent, 2),
-                    "production_output": stats.total_production_output,
-                    "consumption_demand": stats.total_consumption_demand,
+                    "storage_estimate": stats.total_production_output,
+                    "storage_demand": stats.total_consumption_demand,
                     "production_utilization": round(stats.production_utilization, 2),
                     "supply_status": stats.supply_status,
                     "producing_stations": stats.producing_stations,
                     "consuming_stations": stats.consuming_stations
-                })
+                }
+
+                # Add rate data if available
+                if stats.has_rate_data:
+                    ware_data.update({
+                        "production_rate_per_hour": round(stats.production_rate_per_hour, 2),
+                        "consumption_rate_per_hour": round(stats.consumption_rate_per_hour, 2),
+                        "net_rate_per_hour": round(stats.rate_balance, 2),
+                        "station_production_rates": stats.station_production_rates,
+                        "station_consumption_rates": stats.station_consumption_rates
+                    })
+
+                data["production"].append(ware_data)
 
             for station in self.empire.stations:
                 station_data = {
