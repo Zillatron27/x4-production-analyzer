@@ -58,7 +58,6 @@ The tool will (hopefully):
 - **[C] Capacity Planning** - Browse all wares, view rates, analyze dependencies
 - **[S] Station View** - Browse stations, see per-station production/consumption
 - **[L] Logistics** - Empire-wide ship and cargo summary
-- **[P] Search Production** - Same as Capacity Planning
 - **[E] Export** - Export to CSV/JSON/Text
 - **[N] New Save** - Load a different save file
 - **[O] Options** - Settings, refresh game data
