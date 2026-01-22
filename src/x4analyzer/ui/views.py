@@ -16,10 +16,13 @@ from ..analyzers.production_analyzer import ProductionAnalyzer, ProductionStats
 class ViewRenderer:
     """Renders different view screens."""
 
-    def __init__(self, empire: EmpireData, analyzer: ProductionAnalyzer):
+    def __init__(self, empire: EmpireData, analyzer: ProductionAnalyzer,
+                 config_manager=None, save_file_path: str = None):
         self.empire = empire
         self.analyzer = analyzer
         self.console = Console()
+        self.config_manager = config_manager
+        self.save_file_path = save_file_path
 
     def capacity_planning_view(self):
         """Display capacity planning analysis."""
@@ -545,19 +548,22 @@ class ViewRenderer:
         self.console.print("[bold cyan]EXPORT REPORT[/bold cyan]\n")
 
         self.console.print("Select export format:")
-        self.console.print("  [1] CSV (spreadsheet compatible)")
-        self.console.print("  [2] JSON (for scripts/tools)")
-        self.console.print("  [3] Text (human readable report)")
+        self.console.print("  [C] CSV (spreadsheet compatible)")
+        self.console.print("  [J] JSON (for scripts/tools)")
+        self.console.print("  [T] Text (human readable report)")
+        self.console.print("  [B] Back")
         self.console.print()
 
-        choice = self.console.input("Enter choice: ").strip()
+        choice = self.console.input("Enter choice: ").strip().lower()
 
-        if choice == "1":
+        if choice == "c":
             self._export_csv()
-        elif choice == "2":
+        elif choice == "j":
             self._export_json()
-        elif choice == "3":
+        elif choice == "t":
             self._export_text()
+        elif choice == "b":
+            return
         else:
             self.console.print("[red]Invalid choice[/red]")
             self._wait_for_enter()
@@ -780,3 +786,90 @@ class ViewRenderer:
     def _wait_for_enter(self):
         """Wait for user to press Enter."""
         self.console.input("\n[bold cyan]Press Enter to return to main menu...[/bold cyan]")
+
+    def options_view(self, refresh_game_data_callback=None, reload_save_callback=None):
+        """Display options menu."""
+        while True:
+            self.console.clear()
+            self.console.print("[bold cyan]OPTIONS[/bold cyan]\n")
+
+            # Current save file info
+            self.console.print("[bold]Current Save File:[/bold]")
+            if self.save_file_path:
+                save_path = Path(self.save_file_path)
+                if save_path.exists():
+                    stat = save_path.stat()
+                    import time
+                    modified = time.strftime("%Y-%m-%d %H:%M:%S", time.localtime(stat.st_mtime))
+                    size_mb = stat.st_size / (1024 * 1024)
+                    self.console.print(f"  Path: [cyan]{self.save_file_path}[/cyan]")
+                    self.console.print(f"  Size: {size_mb:.1f} MB")
+                    self.console.print(f"  Modified: {modified}")
+                else:
+                    self.console.print(f"  [dim]{self.save_file_path}[/dim]")
+            else:
+                self.console.print("  [dim]No save file loaded[/dim]")
+
+            # Empire info from save
+            self.console.print(f"\n[bold]Empire Info:[/bold]")
+            self.console.print(f"  Commander: [cyan]{self.empire.player_name}[/cyan]")
+            self.console.print(f"  Save Timestamp: {self.empire.save_timestamp}")
+            self.console.print(f"  Stations: {len(self.empire.stations)}")
+            self.console.print(f"  Total Ships: {len(self.empire.all_ships)}")
+
+            # Game data info
+            self.console.print(f"\n[bold]Game Data:[/bold]")
+            if self.config_manager:
+                game_dir = self.config_manager.get_game_directory()
+                if game_dir:
+                    self.console.print(f"  Game Directory: [cyan]{game_dir}[/cyan]")
+                else:
+                    self.console.print("  Game Directory: [dim]Not found[/dim]")
+
+                cache_dir = self.config_manager.config.cache_directory
+                if cache_dir:
+                    cache_path = Path(cache_dir) / "wares_cache.json"
+                    if cache_path.exists():
+                        stat = cache_path.stat()
+                        import time
+                        cached_time = time.strftime("%Y-%m-%d %H:%M:%S", time.localtime(stat.st_mtime))
+                        self.console.print(f"  Wares Cache: [green]Available[/green] (cached {cached_time})")
+                    else:
+                        self.console.print("  Wares Cache: [yellow]Not cached[/yellow]")
+            else:
+                self.console.print("  [dim]Config not available[/dim]")
+
+            if self.analyzer.has_rate_data:
+                self.console.print("  Production Rates: [green]Loaded[/green]")
+            else:
+                self.console.print("  Production Rates: [yellow]Using estimates[/yellow]")
+
+            # Menu options
+            self.console.print(f"\n[bold]Actions:[/bold]")
+            self.console.print("  [G] Refresh Game Data  - Re-extract wares from game files")
+            self.console.print("  [R] Reload Save File   - Re-parse the current save file")
+            self.console.print("  [B] Back               - Return to main menu")
+            self.console.print()
+
+            choice = self.console.input("[bold]Enter choice: [/bold]").strip().lower()
+
+            if choice == 'g':
+                if refresh_game_data_callback:
+                    self.console.print("\n[cyan]Refreshing game data...[/cyan]")
+                    refresh_game_data_callback()
+                    self.console.input("\n[bold]Press Enter to continue...[/bold]")
+                else:
+                    self.console.print("[yellow]Game data refresh not available[/yellow]")
+                    self.console.input("\n[bold]Press Enter to continue...[/bold]")
+            elif choice == 'r':
+                if reload_save_callback:
+                    self.console.print("\n[cyan]Reloading save file...[/cyan]")
+                    return "reload_save"
+                else:
+                    self.console.print("[yellow]Save reload not available[/yellow]")
+                    self.console.input("\n[bold]Press Enter to continue...[/bold]")
+            elif choice in ('b', 'back', ''):
+                return None
+            else:
+                self.console.print("[red]Invalid choice[/red]")
+                self.console.input("\n[bold]Press Enter to continue...[/bold]")

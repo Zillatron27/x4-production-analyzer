@@ -8,6 +8,7 @@ from pathlib import Path
 from typing import Dict, List, Optional
 
 from .catalog_reader import CatalogReader
+from .text_resolver import TextResolver
 
 logger = logging.getLogger("x4analyzer.game_data")
 
@@ -88,10 +89,30 @@ class WaresExtractor:
 
         self.wares: Dict[str, ProductionData] = {}
         self._loaded = False
+        self._text_resolver: Optional[TextResolver] = None
 
     def _get_cache_path(self) -> Path:
         """Get the cache file path."""
         return self.cache_dir / self.CACHE_FILENAME
+
+    def _get_game_version_fingerprint(self) -> str:
+        """
+        Get a fingerprint based on key game file timestamps.
+
+        This allows us to detect when the game has been updated
+        and the cache needs refreshing.
+        """
+        key_files = [
+            self.game_dir / "01.cat",
+            self.game_dir / "08.cat",  # Contains wares.xml
+        ]
+
+        timestamps = []
+        for f in key_files:
+            if f.exists():
+                timestamps.append(f"{f.name}:{f.stat().st_mtime}")
+
+        return "|".join(sorted(timestamps))
 
     def _load_from_cache(self) -> bool:
         """Try to load wares data from cache."""
@@ -107,6 +128,13 @@ class WaresExtractor:
             # Check if cache is for the same game directory
             if data.get("game_directory") != str(self.game_dir):
                 logger.info("Cache is for different game directory, will re-extract")
+                return False
+
+            # Check if game version has changed
+            cached_fingerprint = data.get("game_version_fingerprint", "")
+            current_fingerprint = self._get_game_version_fingerprint()
+            if cached_fingerprint != current_fingerprint:
+                logger.info("Game files have been updated, will re-extract")
                 return False
 
             # Load wares
@@ -169,6 +197,7 @@ class WaresExtractor:
 
         data = {
             "game_directory": str(self.game_dir),
+            "game_version_fingerprint": self._get_game_version_fingerprint(),
             "wares": wares_data
         }
 
@@ -202,8 +231,14 @@ class WaresExtractor:
         try:
             catalog = CatalogReader(self.game_dir)
 
-            # Read wares.xml
-            wares_xml = catalog.read_text_file(self.WARES_PATH)
+            # Initialize text resolver for ware names
+            self._text_resolver = TextResolver(catalog)
+
+            # Read wares.xml - use base file to avoid getting diff patches
+            wares_xml = catalog.read_base_text_file(self.WARES_PATH)
+            if not wares_xml:
+                # Try regular read as fallback
+                wares_xml = catalog.read_text_file(self.WARES_PATH)
             if not wares_xml:
                 # Try direct file access (for unpacked game files)
                 direct_path = self.game_dir / self.WARES_PATH
@@ -245,7 +280,12 @@ class WaresExtractor:
         if not ware_id:
             return None
 
-        name = ware_elem.get("name", ware_id)
+        # Get name and resolve text reference if needed
+        name_ref = ware_elem.get("name", ware_id)
+        if self._text_resolver and name_ref.startswith("{"):
+            name = self._text_resolver.resolve(name_ref)
+        else:
+            name = name_ref
 
         # Get transport class
         transport_class = ware_elem.get("transport", "container")
@@ -262,13 +302,12 @@ class WaresExtractor:
             price_max = int(price_elem.get("max", "0"))
 
         # Get production methods
+        # X4 structure: <ware><production time="X" amount="Y" method="Z"><primary><ware .../></primary></production></ware>
         production_methods = []
-        production_elem = ware_elem.find("production")
-        if production_elem is not None:
-            for method_elem in production_elem.findall("primary") + production_elem.findall("method"):
-                method = self._parse_production_method(method_elem)
-                if method:
-                    production_methods.append(method)
+        for production_elem in ware_elem.findall("production"):
+            method = self._parse_production_method(production_elem)
+            if method:
+                production_methods.append(method)
 
         return ProductionData(
             ware_id=ware_id,
@@ -281,26 +320,28 @@ class WaresExtractor:
             production_methods=production_methods
         )
 
-    def _parse_production_method(self, method_elem: ET.Element) -> Optional[ProductionMethod]:
-        """Parse a production method element."""
-        method_id = method_elem.get("method", method_elem.get("ware", "default"))
+    def _parse_production_method(self, production_elem: ET.Element) -> Optional[ProductionMethod]:
+        """Parse a production element."""
+        method_id = production_elem.get("method", "default")
 
         # Get production time (in seconds)
-        time_seconds = float(method_elem.get("time", "0"))
+        time_seconds = float(production_elem.get("time", "0"))
 
         # Get amount produced
-        amount = int(method_elem.get("amount", "1"))
+        amount = int(production_elem.get("amount", "1"))
 
-        # Get resource requirements
+        # Get resource requirements from <primary> child
         resources = []
-        for ware_elem in method_elem.findall("ware"):
-            res_ware_id = ware_elem.get("ware")
-            res_amount = int(ware_elem.get("amount", "1"))
-            if res_ware_id:
-                resources.append(ResourceRequirement(
-                    ware_id=res_ware_id,
-                    amount=res_amount
-                ))
+        primary_elem = production_elem.find("primary")
+        if primary_elem is not None:
+            for ware_elem in primary_elem.findall("ware"):
+                res_ware_id = ware_elem.get("ware")
+                res_amount = int(ware_elem.get("amount", "1"))
+                if res_ware_id:
+                    resources.append(ResourceRequirement(
+                        ware_id=res_ware_id,
+                        amount=res_amount
+                    ))
 
         return ProductionMethod(
             method_id=method_id,

@@ -209,12 +209,13 @@ class Dashboard:
         menu_text = """
 [bold cyan]MENU OPTIONS:[/bold cyan]
 
-  [1] CAPACITY PLANNING   - Analyze production dependencies
-  [2] STATION VIEW        - View individual station details
-  [3] LOGISTICS ANALYSIS  - Trader/miner assignments
-  [4] SEARCH PRODUCTION   - Search for specific wares
-  [5] EXPORT REPORT       - Export data to CSV/JSON
-  [6] LOAD NEW SAVE       - Load a different save file
+  [C] CAPACITY PLANNING   - Analyze production dependencies
+  [S] STATION VIEW        - View individual station details
+  [L] LOGISTICS ANALYSIS  - Trader/miner assignments
+  [P] SEARCH PRODUCTION   - Search for specific wares
+  [E] EXPORT REPORT       - Export data to CSV/JSON
+  [N] LOAD NEW SAVE       - Load a different save file
+  [O] OPTIONS             - Settings and refresh options
   [Q] QUIT                - Exit analyzer
 
 """

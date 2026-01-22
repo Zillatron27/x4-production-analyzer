@@ -22,6 +22,8 @@ class X4Analyzer:
         self.analyzer = None
         self.dashboard = None
         self.views = None
+        self._current_save_path = None
+        self._wares_extractor = None
 
     def load_save_file(self, file_path: str = None):
         """Load and parse a save file."""
@@ -52,7 +54,10 @@ class X4Analyzer:
 
             # Setup UI
             self.dashboard = Dashboard(self.empire, self.analyzer)
-            self.views = ViewRenderer(self.empire, self.analyzer)
+            self.views = ViewRenderer(self.empire, self.analyzer,
+                                      config_manager=self.config_manager,
+                                      save_file_path=file_path)
+            self._current_save_path = file_path
 
             self.console.print("[green]Load complete![/green]\n")
 
@@ -132,7 +137,7 @@ class X4Analyzer:
 
             return self.console.input("\nEnter save file path: ").strip()
 
-    def _load_game_data(self):
+    def _load_game_data(self, force_reload: bool = False):
         """Try to load game data for accurate production rates."""
         game_dir = self.config_manager.get_game_directory()
 
@@ -143,17 +148,27 @@ class X4Analyzer:
         try:
             from .game_data import WaresExtractor
 
-            self.console.print("[cyan]Loading game data for production rates...[/cyan]")
             cache_dir = self.config_manager.config.cache_directory
+            self._wares_extractor = WaresExtractor(game_dir, cache_dir)
 
-            extractor = WaresExtractor(game_dir, cache_dir)
-            if self.analyzer.load_game_data(extractor):
-                self.console.print("[green]Loaded production rate data from game files[/green]")
+            if force_reload:
+                self.console.print("[cyan]Extracting game data from game files...[/cyan]")
+                self._wares_extractor.extract(force_reload=True)
+            else:
+                self.console.print("[cyan]Loading game data...[/cyan]")
+                self._wares_extractor.extract()
+
+            if self.analyzer.load_game_data(self._wares_extractor):
+                self.console.print("[green]Loaded production rate data[/green]")
             else:
                 self.console.print("[dim]Could not load game production data[/dim]")
 
         except Exception as e:
             self.console.print(f"[dim]Game data unavailable: {e}[/dim]")
+
+    def _refresh_game_data(self):
+        """Force refresh game data from game files."""
+        self._load_game_data(force_reload=True)
 
     def run(self):
         """Run the main application loop."""
@@ -170,19 +185,27 @@ class X4Analyzer:
 
             choice = self.dashboard.prompt_choice()
 
-            if choice == '1':
+            if choice == 'c':
                 self.views.capacity_planning_view()
-            elif choice == '2':
+            elif choice == 's':
                 self.views.station_view()
-            elif choice == '3':
+            elif choice == 'l':
                 self.views.logistics_analysis_view()
-            elif choice == '4':
+            elif choice == 'p':
                 self.views.search_production_view()
-            elif choice == '5':
+            elif choice == 'e':
                 self.views.export_report_view()
-            elif choice == '6':
+            elif choice == 'n':
                 if self.load_save_file():
                     continue
+            elif choice == 'o':
+                result = self.views.options_view(
+                    refresh_game_data_callback=self._refresh_game_data,
+                    reload_save_callback=lambda: True
+                )
+                if result == "reload_save":
+                    if self.load_save_file(self._current_save_path):
+                        continue
             elif choice in ('q', 'quit', 'exit'):
                 self.console.print("\n[cyan]Thanks for using X4 Production Analyzer![/cyan]")
                 break
