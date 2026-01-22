@@ -47,7 +47,7 @@ pip install -r requirements.txt
 python x4analyzer.py
 ```
 
-The tool will:
+The tool will (hopefully):
 1. Auto-detect your X4 save directory
 2. List recent save files for selection
 3. Parse the save and load game data (if X4 installation found)
