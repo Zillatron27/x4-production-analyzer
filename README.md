@@ -6,7 +6,7 @@ A command-line tool to analyze player empire production in X4: Foundations. Pars
 
 ## Current Status
 
-This tool is functional but under active development. Features may change, break, or be removed without notice.
+This tool is (mostly) functional but under active development. Features may change, break, or be removed without notice.
 
 ## Features
 
