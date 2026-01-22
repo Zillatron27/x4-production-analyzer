@@ -84,6 +84,8 @@ class StreamingParser:
 
         # Ship-station linking: maps subordinates connection ID to station ID
         self._subordinate_conn_to_station: Dict[str, str] = {}
+        # Ship-ship linking: maps subordinates connection ID to ship ID (fleet commanders)
+        self._subordinate_conn_to_ship: Dict[str, str] = {}
         # Maps ship commander connected ID to ship ID (for linking)
         self._ship_commander_connected: Dict[str, str] = {}
 
@@ -169,7 +171,7 @@ class StreamingParser:
                 if tag == 'connection' and elem.get('connection') == 'commander':
                     in_commander_connection = True
 
-                # Track when we enter a subordinates connection (inside a station)
+                # Track when we enter a subordinates connection (inside a station or ship)
                 if tag == 'connection' and elem.get('connection') == 'subordinates':
                     in_subordinates_connection = True
                     current_subordinates_conn_id = elem.get('id', '')
@@ -179,6 +181,9 @@ class StreamingParser:
                         if station:
                             station.subordinate_connection_ids.append(current_subordinates_conn_id)
                             self._subordinate_conn_to_station[current_subordinates_conn_id] = self._current_station_id
+                    # Also record for player ships (fleet commanders)
+                    elif current_player_ship_id and current_subordinates_conn_id:
+                        self._subordinate_conn_to_ship[current_subordinates_conn_id] = current_player_ship_id
 
                 # Track nested components
                 if tag == 'component':
@@ -213,7 +218,11 @@ class StreamingParser:
                     valid_ship_classes = ('ship_xs', 'ship_s', 'ship_m', 'ship_l', 'ship_xl')
                     is_ship = comp_class in valid_ship_classes
 
-                    if is_ship:
+                    # Filter out laser towers and other deployables (they're not real ships)
+                    ship_macro = elem.get('macro', '').lower()
+                    is_deployable = 'lasertower' in ship_macro or 'satellite' in ship_macro or 'deployable' in ship_macro
+
+                    if is_ship and not is_deployable:
                         ship = ParsedShip(
                             ship_id=comp_id,
                             name=elem.get('name', f'Ship {comp_id}'),
@@ -368,6 +377,7 @@ class StreamingParser:
 
         logger.info(f"Streaming parse found {station_count} stations, {ship_count} ships ({player_ship_count} player ships)")
         logger.info(f"Collected {len(self._subordinate_conn_to_station)} subordinate connections from stations")
+        logger.info(f"Collected {len(self._subordinate_conn_to_ship)} subordinate connections from ships (fleet commanders)")
         logger.info(f"Collected {len(self._ship_commander_connected)} ship commander connections")
 
         # Post-processing: Link ships to stations via commander connections
@@ -390,8 +400,12 @@ class StreamingParser:
 
         When a ship's commander connected ID matches a station's subordinates connection ID,
         the ship is assigned to that station.
+
+        Ships can also be subordinate to other ships (fleet commanders). We track these
+        separately to identify ships that are part of fleets.
         """
-        linked_count = 0
+        linked_to_station_count = 0
+        linked_to_ship_count = 0
 
         for ship_id, commander_conn_id in self._ship_commander_connected.items():
             ship = self._ships.get(ship_id)
@@ -404,11 +418,22 @@ class StreamingParser:
                 station = self._stations.get(station_id)
                 if station and ship_id not in station.subordinate_ids:
                     station.subordinate_ids.append(ship_id)
-                    linked_count += 1
-                    if linked_count <= 20:
+                    linked_to_station_count += 1
+                    if linked_to_station_count <= 20:
                         logger.debug(f"Linked ship {ship_id} ({ship.name}) to station {station_id} ({station.name})")
+                continue
 
-        logger.info(f"Linked {linked_count} ships to stations via commander connections")
+            # Check if this commander connection points to another ship (fleet membership)
+            fleet_commander_id = self._subordinate_conn_to_ship.get(commander_conn_id)
+            if fleet_commander_id:
+                linked_to_ship_count += 1
+                if linked_to_ship_count <= 20:
+                    commander_ship = self._ships.get(fleet_commander_id)
+                    commander_name = commander_ship.name if commander_ship else fleet_commander_id
+                    logger.debug(f"Ship {ship_id} ({ship.name}) is in fleet of {commander_name}")
+
+        logger.info(f"Linked {linked_to_station_count} ships to stations via commander connections")
+        logger.info(f"Found {linked_to_ship_count} ships assigned to fleet commanders")
 
     def _build_empire_data(self) -> EmpireData:
         """Convert parsed data to EmpireData model."""
@@ -418,6 +443,16 @@ class StreamingParser:
 
         # Track which ships get assigned to stations
         assigned_ship_ids = set()
+
+        # Track ships assigned to fleet commanders (not directly to stations, but still "assigned")
+        fleet_ship_ids = set()
+        for ship_id, commander_conn_id in self._ship_commander_connected.items():
+            ship = self._ships.get(ship_id)
+            if not ship or ship.owner != 'player':
+                continue
+            # If this ship points to a fleet commander (another ship), mark it as assigned
+            if commander_conn_id in self._subordinate_conn_to_ship:
+                fleet_ship_ids.add(ship_id)
 
         for station_id, parsed in self._stations.items():
             # Finalize station type:
@@ -492,9 +527,9 @@ class StreamingParser:
 
             empire.stations.append(station)
 
-        # Collect unassigned player ships
+        # Collect unassigned player ships (not assigned to stations AND not in fleets)
         for ship_id, ship_data in self._ships.items():
-            if ship_data.owner == 'player' and ship_id not in assigned_ship_ids:
+            if ship_data.owner == 'player' and ship_id not in assigned_ship_ids and ship_id not in fleet_ship_ids:
                 ship_type = self._determine_ship_type(ship_data)
                 ship = Ship(
                     ship_id=ship_data.ship_id,
@@ -507,7 +542,8 @@ class StreamingParser:
                 empire.unassigned_ships.append(ship)
 
         logger.info(f"Built empire data: {len(empire.stations)} stations, "
-                   f"{len(empire.all_assigned_ships)} assigned ships, "
+                   f"{len(empire.all_assigned_ships)} assigned to stations, "
+                   f"{len(fleet_ship_ids)} in fleets, "
                    f"{len(empire.unassigned_ships)} unassigned ships")
 
         return empire
