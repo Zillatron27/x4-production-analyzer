@@ -57,6 +57,11 @@ class ProductionStats:
         if self.has_rate_data:
             return self._rate_based_supply_status()
 
+        # If no rate data but also no production and no consumption, it's "No Demand"
+        # This catches wares that appear in storage but aren't actively used
+        if self.total_production_output == 0 and self.total_consumption_demand == 0:
+            return "No Demand"
+
         # Fallback to stock-based estimation
         # If we have consumption but no production, check for mining capacity
         if self.total_consumption_demand > 0 and self.total_production_output == 0:

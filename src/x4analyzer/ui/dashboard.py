@@ -258,11 +258,19 @@ class Dashboard:
         # Supply shortages (high priority)
         shortages = self.analyzer.get_supply_shortages()
         if shortages:
-            self.console.print(
-                f"  [red]Supply Shortages:[/red] "
-                f"{len(shortages)} wares with requests exceeding production"
-            )
-            for stats in shortages[:3]:
+            # Show count and limit display to top 3
+            display_shortages = shortages[:3]
+            if len(shortages) > 3:
+                self.console.print(
+                    f"  [red]Supply Shortages:[/red] "
+                    f"{len(shortages)} wares (showing top 3)"
+                )
+            else:
+                self.console.print(
+                    f"  [red]Supply Shortages:[/red] "
+                    f"{len(shortages)} ware{'s' if len(shortages) > 1 else ''}"
+                )
+            for stats in display_shortages:
                 # For raw materials, show mining info instead of production utilization
                 if stats.ware.category == WareCategory.RAW:
                     if stats.mining_ship_count > 0:
