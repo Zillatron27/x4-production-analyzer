@@ -570,18 +570,20 @@ class StreamingParser:
             for sub_id in parsed.subordinate_ids:
                 ship_data = self._ships.get(sub_id)
                 if ship_data:
-                    ship_type = self._determine_ship_type(ship_data)
-                    cargo_capacity, cargo_tags = self._get_ship_cargo_info(ship_data)
+                    ship_purpose = self._determine_ship_purpose(ship_data)
+                    game_info = self._get_ship_info_from_game_data(ship_data)
                     ship = Ship(
                         ship_id=ship_data.ship_id,
                         name=ship_data.name,
-                        ship_class=ship_data.macro,
-                        ship_type=ship_type,
-                        cargo_capacity=cargo_capacity,
+                        ship_class=game_info["ship_class"] or ship_data.macro,
+                        ship_type=game_info["ship_type"],
+                        ship_purpose=ship_purpose,
+                        cargo_capacity=game_info["cargo_capacity"],
                         assigned_station_id=station_id,
-                        cargo_tags=cargo_tags,
+                        cargo_tags=game_info["cargo_tags"],
                         mining_ware=ship_data.mining_ware,
-                        order_type=ship_data.order_type
+                        order_type=ship_data.order_type,
+                        race=game_info["race"]
                     )
                     station.assigned_ships.append(ship)
                     assigned_ship_ids.add(sub_id)
@@ -591,18 +593,20 @@ class StreamingParser:
         # Collect unassigned player ships (not assigned to stations AND not in fleets)
         for ship_id, ship_data in self._ships.items():
             if ship_data.owner == 'player' and ship_id not in assigned_ship_ids and ship_id not in fleet_ship_ids:
-                ship_type = self._determine_ship_type(ship_data)
-                cargo_capacity, cargo_tags = self._get_ship_cargo_info(ship_data)
+                ship_purpose = self._determine_ship_purpose(ship_data)
+                game_info = self._get_ship_info_from_game_data(ship_data)
                 ship = Ship(
                     ship_id=ship_data.ship_id,
                     name=ship_data.name,
-                    ship_class=ship_data.macro,
-                    ship_type=ship_type,
-                    cargo_capacity=cargo_capacity,
+                    ship_class=game_info["ship_class"] or ship_data.macro,
+                    ship_type=game_info["ship_type"],
+                    ship_purpose=ship_purpose,
+                    cargo_capacity=game_info["cargo_capacity"],
                     assigned_station_id=None,
-                    cargo_tags=cargo_tags,
+                    cargo_tags=game_info["cargo_tags"],
                     mining_ware=ship_data.mining_ware,
-                    order_type=ship_data.order_type
+                    order_type=ship_data.order_type,
+                    race=game_info["race"]
                 )
                 empire.unassigned_ships.append(ship)
 
@@ -632,30 +636,52 @@ class StreamingParser:
 
         return macro_lower
 
-    def _get_ship_cargo_info(self, ship: ParsedShip) -> tuple:
+    def _get_ship_info_from_game_data(self, ship: ParsedShip) -> dict:
         """
-        Get cargo capacity and tags for a ship.
+        Get ship information from game data.
 
         Returns:
-            Tuple of (cargo_capacity, cargo_tags)
+            Dict with cargo_capacity, cargo_tags, ship_type, ship_class, race
         """
-        cargo_capacity = 0
-        cargo_tags = ""
+        result = {
+            "cargo_capacity": 0,
+            "cargo_tags": "",
+            "ship_type": "unknown",
+            "ship_class": "",
+            "race": ""
+        }
 
         if self._ships_extractor:
             ship_info = self._ships_extractor.get_ship_info(ship.macro)
             if ship_info:
-                cargo_capacity = ship_info.cargo_capacity
-                cargo_tags = ship_info.cargo_tags
+                result["cargo_capacity"] = ship_info.cargo_capacity
+                result["cargo_tags"] = ship_info.cargo_tags
+                result["ship_type"] = ship_info.ship_type
+                result["ship_class"] = ship_info.ship_class
+                result["race"] = ship_info.race
 
-        return cargo_capacity, cargo_tags
+        return result
 
-    def _determine_ship_type(self, ship: ParsedShip) -> str:
-        """Determine ship type from purpose and macro."""
+    def _determine_ship_purpose(self, ship: ParsedShip) -> str:
+        """
+        Determine ship's current purpose/role from orders and behavior.
+
+        This is separate from ship_type (which is the game-defined category like 'freighter').
+        Purpose indicates what the ship is actually doing: trading, mining, combat, etc.
+        """
         purpose = ship.purpose.lower()
         macro = ship.macro.lower()
+        order_type = ship.order_type.lower() if ship.order_type else ""
 
-        # Check purpose first (most reliable)
+        # Check order type first (most reliable for current behavior)
+        if 'trade' in order_type:
+            return 'trader'
+        elif 'mining' in order_type:
+            return 'miner'
+        elif 'build' in order_type:
+            return 'builder'
+
+        # Check purpose attribute
         if 'trade' in purpose:
             return 'trader'
         elif 'mine' in purpose:

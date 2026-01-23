@@ -219,6 +219,8 @@ class X4Analyzer:
                 self.views.station_view()
             elif choice == 'l':
                 self.views.logistics_analysis_view()
+            elif choice == 'b':
+                self.views.ship_building_view()
             elif choice == 'e':
                 self.views.export_report_view()
             elif choice == 'n':

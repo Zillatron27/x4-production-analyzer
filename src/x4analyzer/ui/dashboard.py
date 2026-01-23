@@ -312,13 +312,14 @@ class Dashboard:
         menu_text = """
 [bold cyan]MENU OPTIONS:[/bold cyan]
 
-  [C] CAPACITY PLANNING   - Analyze production dependencies
-  [S] STATION VIEW        - View individual station details
-  [L] LOGISTICS ANALYSIS  - Trader/miner assignments
-  [E] EXPORT REPORT       - Export data to CSV/JSON
-  [N] LOAD NEW SAVE       - Load a different save file
-  [O] OPTIONS             - Settings and refresh options
-  [Q] QUIT                - Exit analyzer
+  [C] CAPACITY PLANNING    - Analyze production dependencies
+  [S] STATION VIEW         - View individual station details
+  [L] LOGISTICS ANALYSIS   - Fleet and cargo capacity
+  [B] SHIP BUILDING        - Wharfs, shipyards & supply status
+  [E] EXPORT REPORT        - Export data to CSV/JSON
+  [N] LOAD NEW SAVE        - Load a different save file
+  [O] OPTIONS              - Settings and refresh options
+  [Q] QUIT                 - Exit analyzer
 
 """
         self.console.print(menu_text)

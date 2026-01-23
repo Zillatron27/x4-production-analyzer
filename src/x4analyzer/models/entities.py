@@ -65,13 +65,15 @@ class Ship:
     """Represents a ship assigned to a station."""
     ship_id: str
     name: str
-    ship_class: str
-    ship_type: str  # trader, miner, etc.
+    ship_class: str  # Size class: ship_s, ship_m, ship_l, ship_xl
+    ship_type: str  # Game-defined role: freighter, miner, fighter, etc.
+    ship_purpose: str = ""  # Current purpose: trader, miner, combat, etc. (based on orders/behavior)
     cargo_capacity: int = 0
     assigned_station_id: Optional[str] = None
     cargo_tags: str = ""  # What this ship can carry: "solid", "liquid", "container"
     mining_ware: str = ""  # What ware this ship is mining (if any)
     order_type: str = ""  # Current order type: "MiningRoutine", "TradeRoutine", etc.
+    race: str = ""  # Manufacturing faction: argon, paranid, teladi, etc.
 
 
 @dataclass
@@ -94,12 +96,12 @@ class Station:
     @property
     def traders(self) -> List[Ship]:
         """Get assigned trader ships."""
-        return [s for s in self.assigned_ships if s.ship_type == "trader"]
+        return [s for s in self.assigned_ships if s.ship_purpose == "trader"]
 
     @property
     def miners(self) -> List[Ship]:
         """Get assigned miner ships."""
-        return [s for s in self.assigned_ships if s.ship_type == "miner"]
+        return [s for s in self.assigned_ships if s.ship_purpose == "miner"]
 
     @property
     def total_cargo_capacity(self) -> int:
@@ -145,12 +147,12 @@ class EmpireData:
     @property
     def unassigned_traders(self) -> List[Ship]:
         """Get unassigned trader ships."""
-        return [s for s in self.unassigned_ships if s.ship_type == "trader"]
+        return [s for s in self.unassigned_ships if s.ship_purpose == "trader"]
 
     @property
     def unassigned_miners(self) -> List[Ship]:
         """Get unassigned miner ships."""
-        return [s for s in self.unassigned_ships if s.ship_type == "miner"]
+        return [s for s in self.unassigned_ships if s.ship_purpose == "miner"]
 
     def get_production_by_ware(self) -> Dict[Ware, List[ProductionModule]]:
         """Group production modules by output ware."""

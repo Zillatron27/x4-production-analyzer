@@ -366,9 +366,10 @@ class ViewRenderer:
         self.console.print("[bold cyan]LOGISTICS ANALYSIS[/bold cyan]\n")
 
         summary = self.analyzer.get_logistics_summary()
+        has_rates = self.analyzer.has_rate_data
 
-        # Empire-wide summary
-        self.console.print("[bold]Empire-Wide Summary:[/bold]")
+        # Empire-wide fleet summary
+        self.console.print("[bold]Fleet Summary:[/bold]")
         self.console.print(f"  Total Ships: [green]{summary['total_ships']}[/green] "
                           f"([cyan]{summary['assigned_ships']}[/cyan] assigned, "
                           f"[yellow]{summary['unassigned_ships']}[/yellow] unassigned)")
@@ -376,7 +377,44 @@ class ViewRenderer:
                           f"({summary['assigned_traders']} assigned, {summary['unassigned_traders']} unassigned)")
         self.console.print(f"  Miners: [cyan]{summary['miners']}[/cyan] "
                           f"({summary['assigned_miners']} assigned, {summary['unassigned_miners']} unassigned)")
-        self.console.print(f"  Total Cargo Capacity: {summary['total_cargo_capacity']:,}\n")
+        self.console.print()
+
+        # Cargo capacity vs throughput analysis
+        self.console.print("[bold]Logistics Capacity Analysis:[/bold]")
+        trader_cargo = summary.get('assigned_cargo_capacity', 0)
+        self.console.print(f"  Assigned Trader Cargo: [green]{trader_cargo:,}[/green] units")
+        self.console.print(f"  Unassigned Cargo: [yellow]{summary.get('unassigned_cargo_capacity', 0):,}[/yellow] units")
+        self.console.print(f"  Total Cargo Capacity: [cyan]{summary['total_cargo_capacity']:,}[/cyan] units")
+
+        if has_rates:
+            # Calculate total throughput that needs to be moved
+            throughput = self.analyzer.get_throughput_summary()
+            total_production = throughput.get('total_production', 0)
+            total_consumption = throughput.get('total_consumption', 0)
+            inter_station_flow = throughput.get('inter_station_flow', 0)
+
+            self.console.print()
+            self.console.print(f"  Empire Production: [green]{total_production:,.0f}[/green] units/hr")
+            self.console.print(f"  Empire Consumption: [cyan]{total_consumption:,.0f}[/cyan] units/hr")
+            self.console.print(f"  Inter-Station Flow: [yellow]{inter_station_flow:,.0f}[/yellow] units/hr (needs transport)")
+
+            # Estimate if cargo capacity is sufficient
+            # Heuristic: cargo capacity should be at least 1-2x hourly inter-station flow
+            # (ships make multiple trips per hour depending on distance)
+            if inter_station_flow > 0 and trader_cargo > 0:
+                ratio = trader_cargo / inter_station_flow
+                if ratio >= 2.0:
+                    status = "[green]Sufficient[/green]"
+                    note = "Traders can likely keep up with production"
+                elif ratio >= 1.0:
+                    status = "[yellow]Marginal[/yellow]"
+                    note = "May see occasional shortages during peak demand"
+                else:
+                    status = "[red]Insufficient[/red]"
+                    note = f"Consider adding {int(inter_station_flow / 5000)} more traders"
+                self.console.print(f"  Capacity vs Flow: {ratio:.1f}x - {status}")
+                self.console.print(f"    [dim]{note}[/dim]")
+        self.console.print()
 
         # Station type breakdown
         stations_by_type = self.analyzer.get_stations_by_type()
@@ -393,37 +431,37 @@ class ViewRenderer:
             self.console.print(f"  {type_display}: [green]{len(stations)}[/green]")
         self.console.print()
 
-        # Ship-building facilities consumption
-        ship_builders = self.analyzer.get_ship_building_stations()
-        if ship_builders:
-            self.console.print("[bold yellow]Ship-Building Facility Consumption:[/bold yellow]")
-            for station in ship_builders:
-                self.console.print(f"  [cyan]{station.name}[/cyan] ({station.station_type})")
-                if station.input_demands:
-                    for ware_id, demand in sorted(station.input_demands.items(), key=lambda x: -x[1])[:5]:
-                        from ..models.ware_database import get_ware
-                        ware = get_ware(ware_id)
-                        self.console.print(f"    - {ware.name}: {demand:,} demand")
-                else:
-                    self.console.print(f"    [dim]No active consumption data[/dim]")
-            self.console.print()
-
-        # Per-station breakdown
+        # Per-station breakdown with game-defined ship categories
         self.console.print("[bold]Station Logistics Assignments:[/bold]")
         table = Table(show_header=True, box=None)
         table.add_column("Station", style="cyan")
-        table.add_column("Type", style="yellow")
-        table.add_column("Traders", justify="right", style="green")
-        table.add_column("Miners", justify="right", style="green")
-        table.add_column("Cargo", justify="right")
+        table.add_column("Ships", justify="right", style="green")
+        table.add_column("Freighters", justify="right")
+        table.add_column("Miners", justify="right")
+        table.add_column("Fighters", justify="right")
+        table.add_column("Other", justify="right")
+        table.add_column("Cargo", justify="right", style="yellow")
 
         for station in self.empire.stations:
             if station.assigned_ships:
+                # Group ships by game-defined type
+                ship_counts = {}
+                for ship in station.assigned_ships:
+                    ship_type = ship.ship_type or "unknown"
+                    ship_counts[ship_type] = ship_counts.get(ship_type, 0) + 1
+
+                freighters = ship_counts.get("freighter", 0) + ship_counts.get("transporter", 0)
+                miners = ship_counts.get("miner", 0)
+                fighters = ship_counts.get("fighter", 0) + ship_counts.get("interceptor", 0)
+                other = len(station.assigned_ships) - freighters - miners - fighters
+
                 table.add_row(
                     station.name[:35] + "..." if len(station.name) > 38 else station.name,
-                    station.station_type[:8],
-                    str(len(station.traders)),
-                    str(len(station.miners)),
+                    str(len(station.assigned_ships)),
+                    str(freighters) if freighters else "-",
+                    str(miners) if miners else "-",
+                    str(fighters) if fighters else "-",
+                    str(other) if other else "-",
                     f"{station.total_cargo_capacity:,}"
                 )
 
@@ -440,41 +478,218 @@ class ViewRenderer:
                 self.console.print(f"  ... and {len(no_ships) - 5} more")
             self.console.print()
 
-        # Display unassigned ships
+        # Display unassigned ships grouped by game-defined type
         if self.empire.unassigned_ships:
             self.console.print(f"[bold yellow]Unassigned Ships: {len(self.empire.unassigned_ships)}[/bold yellow]")
 
-            # Group by ship type
+            # Group by game-defined ship type
             unassigned_by_type = {}
             for ship in self.empire.unassigned_ships:
-                ship_type = ship.ship_type
+                ship_type = ship.ship_type or "unknown"
                 if ship_type not in unassigned_by_type:
                     unassigned_by_type[ship_type] = []
                 unassigned_by_type[ship_type].append(ship)
 
             table = Table(show_header=True, box=None)
-            table.add_column("Type", style="cyan")
+            table.add_column("Ship Type", style="cyan")
             table.add_column("Count", justify="right", style="green")
             table.add_column("Cargo", justify="right")
+            table.add_column("Size", style="dim")
             table.add_column("Example Ships", style="dim")
 
             for ship_type, ships in sorted(unassigned_by_type.items(), key=lambda x: -len(x[1])):
                 total_cargo = sum(s.cargo_capacity for s in ships)
-                # Show first 3 ship names as examples
-                examples = ", ".join(s.name for s in ships[:3])
-                if len(ships) > 3:
-                    examples += f" (+{len(ships) - 3} more)"
+                # Get size class breakdown
+                sizes = {}
+                for s in ships:
+                    size = s.ship_class.replace("ship_", "").upper() if s.ship_class.startswith("ship_") else "?"
+                    sizes[size] = sizes.get(size, 0) + 1
+                size_str = ", ".join(f"{count}{size}" for size, count in sorted(sizes.items()))
+
+                # Show first 2 ship names as examples
+                examples = ", ".join(s.name for s in ships[:2])
+                if len(ships) > 2:
+                    examples += f" (+{len(ships) - 2})"
 
                 table.add_row(
                     ship_type.title(),
                     str(len(ships)),
                     f"{total_cargo:,}",
-                    examples[:50] + "..." if len(examples) > 50 else examples
+                    size_str,
+                    examples[:40] + "..." if len(examples) > 40 else examples
                 )
 
             self.console.print(table)
             self.console.print()
 
+        self._wait_for_enter()
+
+    def ship_building_view(self):
+        """Display ship building facilities analysis."""
+        self.console.clear()
+        self.console.print("[bold cyan]SHIP BUILDING FACILITIES[/bold cyan]\n")
+
+        ship_builders = self.analyzer.get_ship_building_stations()
+
+        if not ship_builders:
+            self.console.print("[yellow]No ship building facilities found.[/yellow]")
+            self.console.print("[dim]Build a Wharf, Shipyard, or Equipment Dock to see data here.[/dim]")
+            self._wait_for_enter()
+            return
+
+        has_rates = self.analyzer.has_rate_data
+
+        # Summary
+        wharfs = [s for s in ship_builders if s.station_type == "wharf"]
+        shipyards = [s for s in ship_builders if s.station_type == "shipyard"]
+        equip_docks = [s for s in ship_builders if s.station_type == "equipmentdock"]
+
+        self.console.print("[bold]Facilities Overview:[/bold]")
+        if shipyards:
+            self.console.print(f"  Shipyards: [green]{len(shipyards)}[/green] (builds L/XL ships)")
+        if wharfs:
+            self.console.print(f"  Wharfs: [green]{len(wharfs)}[/green] (builds S/M ships)")
+        if equip_docks:
+            self.console.print(f"  Equipment Docks: [green]{len(equip_docks)}[/green]")
+        self.console.print()
+
+        # Aggregate input demands across all ship builders
+        aggregate_demands = {}  # ware_id -> total demand
+        for station in ship_builders:
+            for ware_id, demand in station.input_demands.items():
+                if ware_id not in aggregate_demands:
+                    aggregate_demands[ware_id] = 0
+                aggregate_demands[ware_id] += demand
+
+        if aggregate_demands:
+            self.console.print("[bold]Material Demands (Trade Orders):[/bold]")
+            self.console.print("[dim]These are the buy orders from your ship building facilities.[/dim]\n")
+
+            from ..models.ware_database import get_ware
+
+            table = Table(show_header=True, box=None)
+            table.add_column("Ware", style="cyan", min_width=20)
+            table.add_column("Demand", justify="right")
+            if has_rates:
+                table.add_column("Empire Prod/hr", justify="right", style="green")
+                table.add_column("Empire Cons/hr", justify="right")
+                table.add_column("Surplus/hr", justify="right")
+            table.add_column("Status", justify="left")
+
+            # Sort by demand, highest first
+            sorted_demands = sorted(aggregate_demands.items(), key=lambda x: -x[1])
+
+            for ware_id, demand in sorted_demands[:15]:  # Top 15
+                ware = get_ware(ware_id)
+                stats = self.analyzer.get_ware_stats(ware_id)
+
+                # Determine supply status
+                if stats:
+                    status = stats.supply_status
+                    if status == "Shortage":
+                        status_display = f"[red]{status}[/red]"
+                    elif status == "Surplus":
+                        status_display = f"[green]{status}[/green]"
+                    elif status == "Balanced":
+                        status_display = f"[yellow]{status}[/yellow]"
+                    else:
+                        status_display = f"[dim]{status}[/dim]"
+
+                    if has_rates:
+                        surplus = stats.rate_balance
+                        if surplus > 0:
+                            surplus_display = f"[green]+{surplus:,.0f}[/green]"
+                        elif surplus < 0:
+                            surplus_display = f"[red]{surplus:,.0f}[/red]"
+                        else:
+                            surplus_display = "[dim]0[/dim]"
+
+                        table.add_row(
+                            ware.name,
+                            f"{demand:,}",
+                            f"{stats.production_rate_per_hour:,.0f}",
+                            f"{stats.consumption_rate_per_hour:,.0f}",
+                            surplus_display,
+                            status_display
+                        )
+                    else:
+                        table.add_row(
+                            ware.name,
+                            f"{demand:,}",
+                            status_display
+                        )
+                else:
+                    if has_rates:
+                        table.add_row(ware.name, f"{demand:,}", "-", "-", "-", "[red]No Production[/red]")
+                    else:
+                        table.add_row(ware.name, f"{demand:,}", "[red]No Production[/red]")
+
+            self.console.print(table)
+
+            if len(sorted_demands) > 15:
+                self.console.print(f"[dim]...and {len(sorted_demands) - 15} more materials[/dim]")
+            self.console.print()
+
+        # Show shortages that affect ship building
+        if has_rates:
+            self.console.print("[bold]Supply Analysis for Ship Building:[/bold]")
+            self.console.print("[dim]Wares with insufficient empire-wide production to meet demand.[/dim]\n")
+
+            shortages = []
+            for ware_id in aggregate_demands.keys():
+                stats = self.analyzer.get_ware_stats(ware_id)
+                if stats and stats.supply_status == "Shortage":
+                    shortages.append((ware_id, stats))
+
+            if shortages:
+                table = Table(show_header=True, box=None)
+                table.add_column("Ware", style="cyan")
+                table.add_column("Deficit/hr", justify="right", style="red")
+                table.add_column("Recommendation", style="dim")
+
+                for ware_id, stats in shortages:
+                    ware = get_ware(ware_id)
+                    deficit = stats.consumption_rate_per_hour - stats.production_rate_per_hour
+
+                    # Calculate recommended modules
+                    if stats.module_count > 0 and stats.production_rate_per_hour > 0:
+                        rate_per_module = stats.production_rate_per_hour / stats.module_count
+                        modules_needed = max(1, int(deficit / rate_per_module) + 1)
+                        recommendation = f"Add ~{modules_needed} production modules"
+                    else:
+                        recommendation = "Start producing this ware"
+
+                    table.add_row(
+                        ware.name,
+                        f"-{deficit:,.0f}",
+                        recommendation
+                    )
+
+                self.console.print(table)
+            else:
+                self.console.print("[green]All demanded materials have sufficient production capacity.[/green]")
+            self.console.print()
+
+        # Per-facility details
+        self.console.print("[bold]Facility Details:[/bold]")
+        for station in ship_builders:
+            type_label = {
+                "shipyard": "Shipyard",
+                "wharf": "Wharf",
+                "equipmentdock": "Equipment Dock"
+            }.get(station.station_type, station.station_type.title())
+
+            self.console.print(f"\n  [cyan]{station.name}[/cyan] ({type_label})")
+            self.console.print(f"  Sector: {station.sector}")
+
+            if station.input_demands:
+                top_demands = sorted(station.input_demands.items(), key=lambda x: -x[1])[:3]
+                demands_str = ", ".join(f"{get_ware(w).name}: {d:,}" for w, d in top_demands)
+                self.console.print(f"  Top demands: {demands_str}")
+            else:
+                self.console.print(f"  [dim]No active trade orders[/dim]")
+
+        self.console.print()
         self._wait_for_enter()
 
     def search_production_view(self):

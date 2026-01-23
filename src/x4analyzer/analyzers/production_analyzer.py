@@ -437,17 +437,22 @@ class ProductionAnalyzer:
         assigned_cargo = 0
         assigned_ships = 0
 
+        # Calculate trader cargo specifically (excluding miners)
+        trader_cargo = 0
+
         for station in self.empire.stations:
             assigned_traders += len(station.traders)
             assigned_miners += len(station.miners)
             assigned_cargo += station.total_cargo_capacity
             assigned_ships += len(station.assigned_ships)
+            trader_cargo += sum(s.cargo_capacity for s in station.traders)
 
         # Unassigned ships
         unassigned_ships = len(self.empire.unassigned_ships)
         unassigned_traders = len(self.empire.unassigned_traders)
         unassigned_miners = len(self.empire.unassigned_miners)
         unassigned_cargo = sum(s.cargo_capacity for s in self.empire.unassigned_ships)
+        unassigned_trader_cargo = sum(s.cargo_capacity for s in self.empire.unassigned_traders)
 
         return {
             "total_ships": assigned_ships + unassigned_ships,
@@ -460,8 +465,41 @@ class ProductionAnalyzer:
             "assigned_miners": assigned_miners,
             "unassigned_miners": unassigned_miners,
             "total_cargo_capacity": assigned_cargo + unassigned_cargo,
-            "assigned_cargo_capacity": assigned_cargo,
-            "unassigned_cargo_capacity": unassigned_cargo
+            "assigned_cargo_capacity": trader_cargo,  # Now specifically trader cargo
+            "unassigned_cargo_capacity": unassigned_trader_cargo
+        }
+
+    def get_throughput_summary(self) -> Dict[str, float]:
+        """
+        Get empire-wide production throughput summary.
+
+        Returns metrics useful for logistics capacity planning:
+        - total_production: Total units/hr being produced across empire
+        - total_consumption: Total units/hr being consumed across empire
+        - inter_station_flow: Estimated units/hr that need to be transported between stations
+        """
+        total_production = 0.0
+        total_consumption = 0.0
+        inter_station_flow = 0.0
+
+        for stats in self._production_stats.values():
+            if stats.has_rate_data:
+                total_production += stats.production_rate_per_hour
+                total_consumption += stats.consumption_rate_per_hour
+
+                # Inter-station flow: consumption that isn't satisfied by same-station production
+                # This is a rough estimate - wares need to move between stations
+                for station_name, cons_rate in stats.station_consumption_rates.items():
+                    # Check if this station also produces this ware
+                    prod_rate = stats.station_production_rates.get(station_name, 0)
+                    # The amount that needs to come from other stations
+                    import_needed = max(0, cons_rate - prod_rate)
+                    inter_station_flow += import_needed
+
+        return {
+            "total_production": total_production,
+            "total_consumption": total_consumption,
+            "inter_station_flow": inter_station_flow
         }
 
     def search_production(self, query: str) -> List[ProductionStats]:
