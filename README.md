@@ -130,10 +130,23 @@ x4-production-analyzer/
 
 ## Known Limitations
 
+### Production Calculations
+- **Workforce bonuses**: Not yet factored into production rates. All calculations assume 0% workforce bonus.
+- **Sector modifiers**: Sun intensity and other sector-specific production modifiers are not applied.
+- **Wharf/Shipyard consumption**: Variable based on build orders - shown as current trade demand rather than predicted consumption.
+
+### Mining & Logistics
 - **Mining heuristic**: Mining coverage is estimated by comparing cargo capacity to consumption rate. Actual throughput depends on mining speed, distance to asteroids, and miner AI efficiency.
-- **Workforce bonuses**: Not yet factored into production rates
-- **Wharf/Shipyard consumption**: Variable based on build orders - shown as current trade demand
-- **Some DLC modules**: May not be recognized in ware database
+- **Travel time**: Inter-station logistics calculations assume instant travel. Real throughput depends on distances and gate connections.
+
+### Game Data & Mods
+- **Mod support is limited**: The tool reads game data from base catalogs and scans the `extensions/` folder, but does **not** apply XML diff patches (`<add>`, `<replace>`, `<remove>`). If you use mods that change production rates, recipes, or ship stats, the tool will show vanilla values.
+- **DLC modules**: Some DLC-specific production modules may not be recognized if they use non-standard naming conventions.
+
+### Technical
+- **Memory usage**: While save file parsing is memory-efficient (streaming), the final empire state is held in memory. Extremely large empires (500+ stations) on low-RAM systems may experience slowdowns.
+
+See [ROADMAP.md](ROADMAP.md) for planned improvements.
 
 ## License
 
