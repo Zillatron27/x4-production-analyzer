@@ -40,12 +40,20 @@ This tool is functional but under active development. Features may change, break
 - **Solution Recommendations** - Suggests fixes: expand production, assign miners, or purchase from market
 - **Feasibility Check** - Clear yes/no on whether expansion can proceed without resolving bottlenecks
 
+### Save Comparison
+- **Track Changes** - Compare current save against any previous save
+- **Supply Status Focus** - Highlights wares that improved or degraded (Surplus↔Balanced↔Shortage)
+- **Alerts** - Warns about new shortages, celebrates resolved ones
+- **Station Tracking** - Shows added/removed stations and module count changes
+- **Production Changes** - Lists new production lines and stopped ones
+
 ### Views
 - **[C] Capacity Planning** - Browse all wares with production/consumption rates, select any for detailed analysis
 - **[S] Station View** - Per-station production rates, consumption rates, net deficits/surpluses
 - **[L] Logistics Analysis** - Fleet capacity, cargo vs throughput, ship assignments
 - **[B] Ship Building** - Wharfs, shipyards, material demands, supply status
 - **[X] Expansion Planner** - Analyze impact of adding production modules
+- **[H] Save Comparison** - Compare current save with a previous save
 - **[E] Export** - CSV, JSON, or text reports with rate data
 
 ### Technical
@@ -87,6 +95,7 @@ The tool will:
 - **[L] Logistics** - Fleet capacity, cargo vs throughput analysis
 - **[B] Ship Building** - Wharfs, shipyards, material supply status
 - **[X] Expansion Planner** - Analyze "what if I expand production?"
+- **[H] Compare Saves** - Compare with another save to see what changed
 - **[E] Export** - Export to CSV/JSON/Text
 - **[N] New Save** - Load a different save file
 - **[O] Options** - Settings, refresh game data

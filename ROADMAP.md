@@ -17,7 +17,7 @@
 - Mining coverage analysis
 - Cargo capacity vs throughput comparison
 
-## Version 2.0 - Simulation Mode 🔶 IN PROGRESS
+## Version 2.0 - Simulation Mode ✅ COMPLETE
 
 | Feature | Status |
 |---------|--------|
@@ -26,9 +26,9 @@
 | Supply chain flow modeling | ✅ Done |
 | "What if" expansion simulator | ✅ Done |
 | Bottleneck severity ranking | ✅ Done |
-| Historical analysis (compare saves) | ❌ Planned |
+| Historical analysis (compare saves) | ✅ Done |
 
-**Remaining:** Decoupled formula engine for workforce/sun/sector modifiers, historical save comparison.
+**Future enhancement:** Decoupled formula engine for workforce/sun/sector modifiers.
 
 ## Version 2.5 - Mod Support 📋 PLANNED
 
