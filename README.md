@@ -6,7 +6,7 @@ A command-line tool to analyze player empire production in X4: Foundations. Pars
 
 ## Current Status
 
-This tool is functional but under active development. Features may change, break, or be removed without notice.
+This tool is (mostly) functional but under active development. Features may change, break, or be removed without notice.
 
 ## Features
 
@@ -47,7 +47,7 @@ pip install -r requirements.txt
 python x4analyzer.py
 ```
 
-The tool will:
+The tool will (hopefully):
 1. Auto-detect your X4 save directory
 2. List recent save files for selection
 3. Parse the save and load game data (if X4 installation found)
@@ -58,7 +58,6 @@ The tool will:
 - **[C] Capacity Planning** - Browse all wares, view rates, analyze dependencies
 - **[S] Station View** - Browse stations, see per-station production/consumption
 - **[L] Logistics** - Empire-wide ship and cargo summary
-- **[P] Search Production** - Same as Capacity Planning
 - **[E] Export** - Export to CSV/JSON/Text
 - **[N] New Save** - Load a different save file
 - **[O] Options** - Settings, refresh game data
