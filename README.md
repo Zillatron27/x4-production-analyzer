@@ -1,6 +1,12 @@
 # X4 Empire Production Analyzer
 
+> **Warning**: This project is in active development and may change rapidly. Use at your own risk.
+
 A command-line tool to analyze player empire production in X4: Foundations. Parse your save files, view production/consumption rates, identify supply imbalances, and understand your industrial empire.
+
+## Current Status
+
+This tool is functional but under active development. Features may change, break, or be removed without notice.
 
 ## Features
 
