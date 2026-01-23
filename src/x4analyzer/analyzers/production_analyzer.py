@@ -186,13 +186,11 @@ class ProductionAnalyzer:
             # Add consumption to production stats for each input ware
             for ware_id, demand in station_inputs.items():
                 ware = get_ware(ware_id)
-                if ware in self._production_stats:
-                    self._production_stats[ware].add_consumption(station.name, demand)
-                elif station.station_type in ("wharf", "shipyard", "equipmentdock"):
-                    # Create production stats for wares consumed by wharfs/shipyards
-                    # even if we don't produce them (shows demand exists)
+                if ware not in self._production_stats:
+                    # Create production stats for wares we consume but don't produce
+                    # This includes raw materials, wares consumed by wharfs/shipyards, etc.
                     self._production_stats[ware] = ProductionStats(ware)
-                    self._production_stats[ware].add_consumption(station.name, demand)
+                self._production_stats[ware].add_consumption(station.name, demand)
 
     def get_supply_shortages(self) -> List[ProductionStats]:
         """Get wares with supply shortages (demand exceeds production)."""

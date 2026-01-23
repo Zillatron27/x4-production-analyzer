@@ -71,18 +71,23 @@ class Dashboard:
         # Category header
         self.console.print(f"  [bold yellow]{category.value}[/bold yellow]")
 
-        # Create table
+        # Check if we have rate data available
+        has_rates = self.analyzer.has_rate_data
+
+        # Create table with appropriate columns
         table = Table(show_header=True, header_style="bold", box=None, padding=(0, 1))
         table.add_column("Ware", style="cyan")
         table.add_column("Modules", justify="right", style="green")
-        table.add_column("Stock", justify="right")
-        table.add_column("Supply/Demand", justify="left")
+        if has_rates:
+            table.add_column("Prod/hr", justify="right")
+            table.add_column("Cons/hr", justify="right")
+            table.add_column("Balance", justify="right")
+        else:
+            table.add_column("Stock", justify="right")
+            table.add_column("Supply/Demand", justify="left")
         table.add_column("Status", justify="left")
 
         for stats in stats_list:
-            # Create utilization bar based on supply vs demand
-            utilization_bar = self._create_utilization_bar(stats.production_utilization)
-
             # Color-code supply status
             status = stats.supply_status
             if status == "Shortage":
@@ -94,13 +99,50 @@ class Dashboard:
             else:
                 status_display = f"[dim]{status}[/dim]"
 
-            table.add_row(
-                stats.ware.name,
-                str(stats.module_count),
-                f"{stats.total_stock:,}",
-                utilization_bar,
-                status_display
-            )
+            if has_rates:
+                # Show rate-based data
+                prod_rate = stats.production_rate_per_hour
+                cons_rate = stats.consumption_rate_per_hour
+                balance = stats.rate_balance
+
+                # Format production (0 for consumed-only wares like raw materials)
+                if prod_rate > 0:
+                    prod_display = f"{prod_rate:,.0f}"
+                else:
+                    prod_display = "[dim]0[/dim]"
+
+                # Format consumption
+                if cons_rate > 0:
+                    cons_display = f"{cons_rate:,.0f}"
+                else:
+                    cons_display = "[dim]0[/dim]"
+
+                # Format balance with color
+                if balance > 0:
+                    balance_display = f"[green]+{balance:,.0f}[/green]"
+                elif balance < 0:
+                    balance_display = f"[red]{balance:,.0f}[/red]"
+                else:
+                    balance_display = "[dim]0[/dim]"
+
+                table.add_row(
+                    stats.ware.name,
+                    str(stats.module_count),
+                    prod_display,
+                    cons_display,
+                    balance_display,
+                    status_display
+                )
+            else:
+                # Fallback to storage-based display
+                utilization_bar = self._create_utilization_bar(stats.production_utilization)
+                table.add_row(
+                    stats.ware.name,
+                    str(stats.module_count),
+                    f"{stats.total_stock:,}",
+                    utilization_bar,
+                    status_display
+                )
 
         self.console.print(table)
 
@@ -212,7 +254,6 @@ class Dashboard:
   [C] CAPACITY PLANNING   - Analyze production dependencies
   [S] STATION VIEW        - View individual station details
   [L] LOGISTICS ANALYSIS  - Trader/miner assignments
-  [P] SEARCH PRODUCTION   - Search for specific wares
   [E] EXPORT REPORT       - Export data to CSV/JSON
   [N] LOAD NEW SAVE       - Load a different save file
   [O] OPTIONS             - Settings and refresh options

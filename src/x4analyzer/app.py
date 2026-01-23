@@ -191,8 +191,6 @@ class X4Analyzer:
                 self.views.station_view()
             elif choice == 'l':
                 self.views.logistics_analysis_view()
-            elif choice == 'p':
-                self.views.search_production_view()
             elif choice == 'e':
                 self.views.export_report_view()
             elif choice == 'n':

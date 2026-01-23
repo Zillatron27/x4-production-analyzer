@@ -313,8 +313,13 @@ class StreamingParser:
                     station = self._stations.get(self._current_station_id)
 
                     if station:
-                        # Track production modules
-                        if 'prod_' in macro_lower:
+                        # Track production modules - must start with a production module prefix
+                        # X4 production module macros follow pattern: prod_gen_*, prod_arg_*, prod_par_*, etc.
+                        is_production_module = any(
+                            macro_lower.startswith(prefix) for prefix in
+                            ['prod_gen_', 'prod_arg_', 'prod_par_', 'prod_tel_', 'prod_spl_', 'prod_ter_']
+                        )
+                        if is_production_module:
                             station.modules.append(macro)
 
                         # Detect station type from buildmodule macros
@@ -484,23 +489,39 @@ class StreamingParser:
             # Convert modules
             for macro in parsed.modules:
                 ware_id = self._extract_ware_from_macro(macro)
+
+                # Only create module if we could extract a valid ware ID
+                if not ware_id:
+                    continue
+
+                # Validate by checking if ware actually has trade data for this station
+                # This prevents phantom modules where prod_ is in the macro but no actual production
+                ware = get_ware(ware_id)
+                has_trade_data = ware_id in parsed.trade_wares and parsed.trade_wares[ware_id]['sell']
+
+                # Skip if this looks like a production module but has no trade data
+                # (suggests it's a structural element, not actual production)
+                if not has_trade_data:
+                    # Log for debugging but still allow modules without trade data
+                    # in case trade data wasn't captured
+                    logger.debug(f"Station {parsed.name}: module {macro} -> {ware_id} has no sell trade data")
+
                 module = ProductionModule(
                     module_id=f"{station_id}_{macro}",
                     macro=macro
                 )
-                if ware_id:
-                    module.output_ware = get_ware(ware_id)
+                module.output_ware = ware
 
-                    # Add trade data if available
-                    if ware_id in parsed.trade_wares:
-                        trade = parsed.trade_wares[ware_id]
-                        if trade['sell']:
-                            sell_data = trade['sell'][0]
-                            module.output = TradeResource(
-                                ware=module.output_ware,
-                                amount=sell_data['amount'],
-                                capacity=sell_data['desired'] if sell_data['desired'] > 0 else sell_data['amount'] * 2
-                            )
+                # Add trade data if available
+                if ware_id in parsed.trade_wares:
+                    trade = parsed.trade_wares[ware_id]
+                    if trade['sell']:
+                        sell_data = trade['sell'][0]
+                        module.output = TradeResource(
+                            ware=module.output_ware,
+                            amount=sell_data['amount'],
+                            capacity=sell_data['desired'] if sell_data['desired'] > 0 else sell_data['amount'] * 2
+                        )
 
                 station.modules.append(module)
 
@@ -555,13 +576,19 @@ class StreamingParser:
         if "prod_" not in macro.lower():
             return ""
 
-        macro = macro.lower()
-        for prefix in ['prod_gen_', 'prod_arg_', 'prod_par_', 'prod_tel_', 'prod_spl_', 'prod_ter_', 'prod_']:
-            macro = macro.replace(prefix, '')
-        for suffix in ['_macro', '_01', '_02', '_03']:
-            macro = macro.replace(suffix, '')
+        macro_lower = macro.lower()
 
-        return macro
+        # Skip non-production entries that happen to contain 'prod_'
+        # such as production storage modules or other structural elements
+        if 'storage' in macro_lower or 'struct' in macro_lower or 'connection' in macro_lower:
+            return ""
+
+        for prefix in ['prod_gen_', 'prod_arg_', 'prod_par_', 'prod_tel_', 'prod_spl_', 'prod_ter_', 'prod_']:
+            macro_lower = macro_lower.replace(prefix, '')
+        for suffix in ['_macro', '_01', '_02', '_03']:
+            macro_lower = macro_lower.replace(suffix, '')
+
+        return macro_lower
 
     def _determine_ship_type(self, ship: ParsedShip) -> str:
         """Determine ship type from purpose and macro."""

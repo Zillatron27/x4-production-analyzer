@@ -126,11 +126,14 @@ class ViewRenderer:
                 self.console.print()
 
             # Options
-            self.console.print("[dim]Enter number to select, search term to filter, or B to go back[/dim]")
+            self.console.print("[dim]Enter number to select ware, type to search, or B to go back[/dim]")
             choice = self.console.input("Selection: ").strip()
 
             if not choice or choice.lower() == 'b':
                 return
+
+            # Convert to lowercase for text search (but preserve case for number check)
+            choice_lower = choice.lower()
 
             # Check if it's a number
             if choice.isdigit():
@@ -192,9 +195,9 @@ class ViewRenderer:
 
             self.console.print()
             self.console.print("[dim]Enter station number, or B to go back[/dim]")
-            choice = self.console.input("Selection: ").strip()
+            choice = self.console.input("Selection: ").strip().lower()
 
-            if not choice or choice.lower() == 'b':
+            if not choice or choice == 'b':
                 return
 
             if not choice.isdigit():
@@ -338,7 +341,7 @@ class ViewRenderer:
             self.console.print(f"  Miners: [green]{len(station.miners)}[/green]")
             self.console.print(f"  Total Cargo: {station.total_cargo_capacity:,}\n")
 
-        self._wait_for_enter()
+        self._wait_for_enter("station list")
 
     def logistics_analysis_view(self):
         """Display logistics analysis."""
@@ -627,7 +630,7 @@ class ViewRenderer:
             self.console.print(f"  Excess may be sold to NPC factions for profit")
             self.console.print()
 
-        self._wait_for_enter()
+        self._wait_for_enter("ware list")
 
     def export_report_view(self):
         """Export data to file."""
@@ -900,9 +903,9 @@ class ViewRenderer:
 
         self._wait_for_enter()
 
-    def _wait_for_enter(self):
+    def _wait_for_enter(self, message: str = "main menu"):
         """Wait for user to press Enter."""
-        self.console.input("\n[bold cyan]Press Enter to return to main menu...[/bold cyan]")
+        self.console.input(f"\n[bold cyan]Press Enter to return to {message}...[/bold cyan]")
 
     def options_view(self, refresh_game_data_callback=None, reload_save_callback=None):
         """Display options menu."""
