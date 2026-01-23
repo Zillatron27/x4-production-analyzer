@@ -58,8 +58,13 @@ class ProductionStats:
             return self._rate_based_supply_status()
 
         # Fallback to stock-based estimation
-        # If we have consumption but no production, that's a shortage
+        # If we have consumption but no production, check for mining capacity
         if self.total_consumption_demand > 0 and self.total_production_output == 0:
+            # Check if this is a mined raw material with sufficient miners
+            if self.mining_ship_count > 0:
+                mining_status = self.mining_coverage_status
+                if mining_status in ("Sufficient", "Marginal"):
+                    return "Balanced"
             return "Shortage"
 
         # If no consumption, check if we're producing (surplus) or not tracking
@@ -80,6 +85,16 @@ class ProductionStats:
         """Get supply status based on actual production rates."""
         if self.production_rate_per_hour == 0:
             if self.consumption_rate_per_hour > 0:
+                # No production modules - check if this is a mined raw material
+                if self.mining_ship_count > 0:
+                    # Use mining coverage status instead
+                    mining_status = self.mining_coverage_status
+                    if mining_status == "Sufficient":
+                        return "Balanced"  # Miners can supply the demand
+                    elif mining_status == "Marginal":
+                        return "Balanced"  # Miners might be able to supply
+                    else:
+                        return "Shortage"  # Insufficient miners
                 return "Shortage"
             return "No Demand"
 

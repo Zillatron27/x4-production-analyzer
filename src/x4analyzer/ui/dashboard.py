@@ -263,10 +263,23 @@ class Dashboard:
                 f"{len(shortages)} wares with requests exceeding production"
             )
             for stats in shortages[:3]:
-                self.console.print(
-                    f"    - [red]{stats.ware.name}[/red] "
-                    f"({stats.production_utilization:.0f}% requested vs capacity)"
-                )
+                # For raw materials, show mining info instead of production utilization
+                if stats.ware.category == WareCategory.RAW:
+                    if stats.mining_ship_count > 0:
+                        self.console.print(
+                            f"    - [red]{stats.ware.name}[/red] "
+                            f"({stats.mining_ship_count} miners, insufficient capacity)"
+                        )
+                    else:
+                        self.console.print(
+                            f"    - [red]{stats.ware.name}[/red] "
+                            f"(no miners assigned)"
+                        )
+                else:
+                    self.console.print(
+                        f"    - [red]{stats.ware.name}[/red] "
+                        f"({stats.production_utilization:.0f}% requested vs capacity)"
+                    )
 
         # Low stock warnings (secondary)
         bottlenecks = self.analyzer.get_potential_bottlenecks(stock_threshold=30.0)
