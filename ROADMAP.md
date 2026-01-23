@@ -24,11 +24,11 @@
 | Production cycle times from game files | ✅ Done |
 | Actual throughput calculation (units/hr) | ✅ Done |
 | Supply chain flow modeling | ✅ Done |
-| "What if" expansion simulator | ❌ Planned |
-| Bottleneck severity ranking | 🔶 Partial |
+| "What if" expansion simulator | ✅ Done |
+| Bottleneck severity ranking | ✅ Done |
 | Historical analysis (compare saves) | ❌ Planned |
 
-**Requires:** Decoupled formula engine to support workforce/sun/sector modifiers without re-parsing.
+**Remaining:** Decoupled formula engine for workforce/sun/sector modifiers, historical save comparison.
 
 ## Version 2.5 - Mod Support 📋 PLANNED
 

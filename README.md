@@ -33,11 +33,19 @@ This tool is functional but under active development. Features may change, break
 - **Game-Defined Ship Types** - Uses X4's ship classifications (freighter, miner, fighter, etc.)
 - **Station Assignments** - Per-station breakdown of assigned ships by type
 
+### Expansion Planning
+- **Impact Analysis** - "If I add X modules, what happens to my supply chain?"
+- **Input Requirements** - Shows each input ware with sufficient/marginal/insufficient status
+- **Bottleneck Detection** - Identifies shortages with severity levels (critical/high/medium)
+- **Solution Recommendations** - Suggests fixes: expand production, assign miners, or purchase from market
+- **Feasibility Check** - Clear yes/no on whether expansion can proceed without resolving bottlenecks
+
 ### Views
 - **[C] Capacity Planning** - Browse all wares with production/consumption rates, select any for detailed analysis
 - **[S] Station View** - Per-station production rates, consumption rates, net deficits/surpluses
 - **[L] Logistics Analysis** - Fleet capacity, cargo vs throughput, ship assignments
 - **[B] Ship Building** - Wharfs, shipyards, material demands, supply status
+- **[X] Expansion Planner** - Analyze impact of adding production modules
 - **[E] Export** - CSV, JSON, or text reports with rate data
 
 ### Technical
@@ -78,6 +86,7 @@ The tool will:
 - **[S] Station View** - Browse stations, see per-station production/consumption
 - **[L] Logistics** - Fleet capacity, cargo vs throughput analysis
 - **[B] Ship Building** - Wharfs, shipyards, material supply status
+- **[X] Expansion Planner** - Analyze "what if I expand production?"
 - **[E] Export** - Export to CSV/JSON/Text
 - **[N] New Save** - Load a different save file
 - **[O] Options** - Settings, refresh game data
