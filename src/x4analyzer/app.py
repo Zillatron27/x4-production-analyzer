@@ -224,6 +224,8 @@ class X4Analyzer:
                 self.views.ship_building_view()
             elif choice == 'x':
                 self.views.expansion_planner_view()
+            elif choice == 'h':
+                self.views.save_comparison_view()
             elif choice == 'e':
                 self.views.export_report_view()
             elif choice == 'n':

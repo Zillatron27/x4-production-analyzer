@@ -315,6 +315,7 @@ class Dashboard:
   [L] LOGISTICS ANALYSIS   - Fleet and cargo capacity
   [B] SHIP BUILDING        - Wharfs, shipyards & supply status
   [X] EXPANSION PLANNER    - Analyze expansion impact
+  [H] COMPARE SAVES        - Compare with another save file
   [E] EXPORT REPORT        - Export data to CSV/JSON
   [N] LOAD NEW SAVE        - Load a different save file
   [O] OPTIONS              - Settings and refresh options

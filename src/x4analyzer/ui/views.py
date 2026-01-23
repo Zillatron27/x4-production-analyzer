@@ -1405,6 +1405,249 @@ class ViewRenderer:
 
         self._wait_for_enter()
 
+    def save_comparison_view(self):
+        """Compare current save with another save file."""
+        self.console.clear()
+        self.console.print("[bold cyan]SAVE COMPARISON[/bold cyan]\n")
+
+        if not self.config_manager:
+            self.console.print("[red]Configuration not available[/red]")
+            self._wait_for_enter()
+            return
+
+        self.console.print(f"[bold]Current save:[/bold] {self.save_file_path or 'Unknown'}")
+        self.console.print(f"[bold]Timestamp:[/bold] {self.empire.save_timestamp}\n")
+
+        # Get recent saves
+        recent_saves = self.config_manager.get_recent_saves(10)
+
+        # Filter out current save
+        current_path = str(self.save_file_path) if self.save_file_path else ""
+        other_saves = [s for s in recent_saves if s["path"] != current_path]
+
+        if not other_saves:
+            self.console.print("[yellow]No other save files found to compare[/yellow]")
+            self._wait_for_enter()
+            return
+
+        self.console.print("[bold]Select a save to compare against:[/bold]\n")
+
+        table = Table(show_header=True, box=None)
+        table.add_column("#", style="cyan", width=4)
+        table.add_column("Save File", style="green")
+        table.add_column("Size", justify="right")
+        table.add_column("Modified", style="dim")
+
+        for i, save in enumerate(other_saves, 1):
+            table.add_row(
+                str(i),
+                save["name"],
+                f"{save['size_mb']:.1f} MB",
+                save["modified"]
+            )
+
+        self.console.print(table)
+        self.console.print("\n[dim][B] Back[/dim]\n")
+
+        choice = self.console.input("Selection: ").strip()
+
+        if not choice or choice.lower() == 'b':
+            return
+
+        if not choice.isdigit():
+            self.console.print("[red]Invalid selection[/red]")
+            self._wait_for_enter()
+            return
+
+        idx = int(choice) - 1
+        if idx < 0 or idx >= len(other_saves):
+            self.console.print("[red]Invalid selection[/red]")
+            self._wait_for_enter()
+            return
+
+        compare_save = other_saves[idx]
+        self._run_comparison(compare_save["path"])
+
+    def _run_comparison(self, other_save_path: str):
+        """Parse another save and run comparison."""
+        from rich.progress import Progress, SpinnerColumn, TextColumn
+        from ..parsers.streaming_parser import StreamingParser
+        from ..analyzers.production_analyzer import ProductionAnalyzer
+        from ..analyzers.save_comparator import compare_empires
+
+        self.console.print("\n[cyan]Loading save for comparison...[/cyan]")
+
+        try:
+            # Parse the other save
+            with Progress(
+                SpinnerColumn(),
+                TextColumn("[progress.description]{task.description}"),
+                console=self.console,
+                transient=True
+            ) as progress:
+                task = progress.add_task("Parsing comparison save...", total=None)
+
+                parser = StreamingParser(other_save_path)
+                other_empire = parser.parse()
+
+                progress.update(task, description="Analyzing comparison save...")
+
+                other_analyzer = ProductionAnalyzer(other_empire)
+
+                # Load game data if available
+                if self.wares_extractor:
+                    other_analyzer.load_game_data(self.wares_extractor)
+
+            # Determine which save is older
+            # We'll assume the comparison save is the "old" one
+            comparison = compare_empires(
+                old_analyzer=other_analyzer,
+                new_analyzer=self.analyzer,
+                old_timestamp=other_empire.save_timestamp,
+                new_timestamp=self.empire.save_timestamp,
+                old_path=other_save_path,
+                new_path=self.save_file_path or ""
+            )
+
+            self._display_comparison(comparison)
+
+        except FileNotFoundError:
+            self.console.print(f"[red]Save file not found: {other_save_path}[/red]")
+        except Exception as e:
+            self.console.print(f"[red]Error comparing saves: {e}[/red]")
+            import sys
+            if "--debug" in sys.argv:
+                raise
+
+        self._wait_for_enter()
+
+    def _display_comparison(self, comparison):
+        """Display the save comparison results."""
+        from ..analyzers.save_comparator import ChangeType
+
+        self.console.clear()
+        self.console.print("[bold cyan]SAVE COMPARISON RESULTS[/bold cyan]")
+        self.console.print("═" * 60)
+
+        # Header
+        self.console.print("\n[bold]Comparing:[/bold]")
+        self.console.print(f"  Old: {comparison.old_save_timestamp}")
+        self.console.print(f"  New: {comparison.new_save_timestamp}")
+
+        # Alerts
+        if comparison.alerts:
+            self.console.print("\n[bold yellow]ALERTS[/bold yellow]")
+            self.console.print("─" * 60)
+            for alert in comparison.alerts:
+                self.console.print(f"  {alert}")
+
+        # Summary
+        self.console.print("\n[bold]SUMMARY[/bold]")
+        self.console.print("─" * 60)
+        self.console.print(f"  Wares compared: {comparison.total_wares_compared}")
+        self.console.print(f"  [green]Improved:[/green] {comparison.improved_count}")
+        self.console.print(f"  [red]Degraded:[/red] {comparison.degraded_count}")
+        self.console.print(f"  [cyan]New production:[/cyan] {comparison.new_production_count}")
+        self.console.print(f"  [yellow]Stopped:[/yellow] {comparison.stopped_count}")
+        self.console.print(f"  Unchanged: {comparison.unchanged_count}")
+
+        if comparison.stations_added or comparison.stations_removed:
+            self.console.print(f"\n  Stations added: [green]+{comparison.stations_added}[/green]")
+            self.console.print(f"  Stations removed: [red]-{comparison.stations_removed}[/red]")
+            if comparison.total_modules_delta != 0:
+                delta_color = "green" if comparison.total_modules_delta > 0 else "red"
+                delta_sign = "+" if comparison.total_modules_delta > 0 else ""
+                self.console.print(f"  Module change: [{delta_color}]{delta_sign}{comparison.total_modules_delta}[/{delta_color}]")
+
+        # Degraded wares (most important)
+        degraded = [c for c in comparison.ware_changes if c.change_type == ChangeType.DEGRADED]
+        if degraded:
+            self.console.print("\n[bold red]DEGRADED (requires attention)[/bold red]")
+            self.console.print("─" * 60)
+
+            table = Table(show_header=True, box=None)
+            table.add_column("Ware", style="red")
+            table.add_column("Was", justify="center")
+            table.add_column("→", justify="center", style="dim")
+            table.add_column("Now", justify="center")
+            table.add_column("Balance Δ", justify="right")
+
+            for change in degraded[:10]:
+                old_color = self._status_color(change.old_status)
+                new_color = self._status_color(change.new_status)
+                delta = f"{change.balance_delta:+,.0f}/hr" if change.balance_delta != 0 else "—"
+                delta_color = "red" if change.balance_delta < 0 else "green"
+
+                table.add_row(
+                    change.ware.name,
+                    f"[{old_color}]{change.old_status}[/{old_color}]",
+                    "→",
+                    f"[{new_color}]{change.new_status}[/{new_color}]",
+                    f"[{delta_color}]{delta}[/{delta_color}]"
+                )
+
+            self.console.print(table)
+
+        # Improved wares
+        improved = [c for c in comparison.ware_changes if c.change_type == ChangeType.IMPROVED]
+        if improved:
+            self.console.print("\n[bold green]IMPROVED[/bold green]")
+            self.console.print("─" * 60)
+
+            table = Table(show_header=True, box=None)
+            table.add_column("Ware", style="green")
+            table.add_column("Was", justify="center")
+            table.add_column("→", justify="center", style="dim")
+            table.add_column("Now", justify="center")
+            table.add_column("Balance Δ", justify="right")
+
+            for change in improved[:10]:
+                old_color = self._status_color(change.old_status)
+                new_color = self._status_color(change.new_status)
+                delta = f"{change.balance_delta:+,.0f}/hr" if change.balance_delta != 0 else "—"
+
+                table.add_row(
+                    change.ware.name,
+                    f"[{old_color}]{change.old_status}[/{old_color}]",
+                    "→",
+                    f"[{new_color}]{change.new_status}[/{new_color}]",
+                    f"[green]{delta}[/green]"
+                )
+
+            self.console.print(table)
+
+        # New production
+        new_prod = [c for c in comparison.ware_changes if c.change_type == ChangeType.NEW_PRODUCTION]
+        if new_prod:
+            self.console.print("\n[bold cyan]NEW PRODUCTION[/bold cyan]")
+            self.console.print("─" * 60)
+            for change in new_prod[:10]:
+                self.console.print(
+                    f"  [cyan]{change.ware.name}[/cyan]: "
+                    f"{change.new_modules} modules, {change.new_production_rate:,.0f}/hr"
+                )
+
+        # Stopped production
+        stopped = [c for c in comparison.ware_changes if c.change_type == ChangeType.STOPPED]
+        if stopped:
+            self.console.print("\n[bold yellow]STOPPED PRODUCTION[/bold yellow]")
+            self.console.print("─" * 60)
+            for change in stopped[:10]:
+                self.console.print(
+                    f"  [yellow]{change.ware.name}[/yellow]: "
+                    f"was {change.old_modules} modules, {change.old_production_rate:,.0f}/hr"
+                )
+
+    def _status_color(self, status: str) -> str:
+        """Get color for a supply status."""
+        return {
+            "Surplus": "yellow",
+            "Balanced": "green",
+            "Shortage": "red",
+            "No Demand": "dim",
+            "Not Produced": "dim"
+        }.get(status, "white")
+
     def _wait_for_enter(self, message: str = "main menu"):
         """Wait for user to press Enter."""
         self.console.input(f"\n[bold cyan]Press Enter to return to {message}...[/bold cyan]")
