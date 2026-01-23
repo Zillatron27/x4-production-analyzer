@@ -575,6 +575,8 @@ class ProductionAnalyzer:
                     consumption_rates[input_ware_id]["stations"][station.name] += consumption_rate
 
         # Apply rates to existing production stats
+        # Mark all stats as having rate data - if a ware has no production or consumption
+        # rates calculated, that means it's truly "No Demand" (not producing, not consuming)
         for stats in self._production_stats.values():
             ware_id = stats.ware.ware_id.lower()
 
@@ -582,13 +584,15 @@ class ProductionAnalyzer:
             if ware_id in production_rates:
                 stats.production_rate_per_hour = production_rates[ware_id]["total"]
                 stats.station_production_rates = production_rates[ware_id]["stations"]
-                stats.has_rate_data = True
 
             # Apply consumption rates
             if ware_id in consumption_rates:
                 stats.consumption_rate_per_hour = consumption_rates[ware_id]["total"]
                 stats.station_consumption_rates = consumption_rates[ware_id]["stations"]
-                stats.has_rate_data = True
+
+            # Mark as having rate data - even if rates are 0, we know it's accurate
+            # (as opposed to falling back to storage-based estimates)
+            stats.has_rate_data = True
 
         # Create stats for wares that are consumed but not produced
         # (e.g., raw materials we buy from NPCs)

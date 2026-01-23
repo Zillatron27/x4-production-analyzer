@@ -9,7 +9,7 @@ import csv
 from pathlib import Path
 from typing import Optional
 
-from ..models.entities import EmpireData, Station
+from ..models.entities import EmpireData, Station, WareCategory
 from ..analyzers.production_analyzer import ProductionAnalyzer, ProductionStats
 
 
@@ -59,9 +59,9 @@ class ViewRenderer:
             # Display numbered table grouped by category
             self.console.print("[bold]Select a ware to analyze:[/bold]")
             if has_rates:
-                self.console.print("[dim]Showing actual production/consumption rates from game data[/dim]\n")
+                self.console.print("[dim]Showing production/consumption rates[/dim]\n")
             else:
-                self.console.print("[dim]Game data not loaded - showing storage-based estimates[/dim]\n")
+                self.console.print("[dim]Showing storage-based estimates[/dim]\n")
 
             idx = 1
             for category in category_order:
@@ -551,26 +551,41 @@ class ViewRenderer:
                 self.console.print(f"  Net balance: [red]{balance:,.0f}[/red] units/hour (deficit)")
             else:
                 self.console.print(f"  Net balance: [yellow]0[/yellow] units/hour (balanced)")
+
+            # Empire status based on rates
+            status = stats.supply_status
+            if status == "Shortage":
+                self.console.print(f"  Empire status: [red]{status}[/red]")
+            elif status == "Surplus":
+                self.console.print(f"  Empire status: [green]{status}[/green]")
+            elif status == "Balanced":
+                self.console.print(f"  Empire status: [green]{status}[/green]")
+            else:
+                self.console.print(f"  Empire status: [dim]{status}[/dim]")
             self.console.print()
 
-        # Supply/Demand section (storage-based estimates)
-        self.console.print("[bold yellow]Storage-Based Estimates:[/bold yellow]")
-        self.console.print(f"  Production capacity: {stats.total_production_output:,} (storage estimate)")
-        self.console.print(f"  Requested stock: {stats.total_consumption_demand:,} (buy orders)")
+        # Storage-based estimates section (only show if no rate data OR if there's meaningful storage data)
         if not stats.has_rate_data:
-            self.console.print(f"  [dim]Note: Game data not loaded - using storage estimates[/dim]")
+            if stats.total_production_output > 0 or stats.total_consumption_demand > 0:
+                self.console.print("[bold yellow]Storage-Based Estimates:[/bold yellow]")
+                self.console.print(f"  Production capacity: {stats.total_production_output:,} (storage estimate)")
+                self.console.print(f"  Requested stock: {stats.total_consumption_demand:,} (buy orders)")
 
-        # Color-code supply status
-        status = stats.supply_status
-        if status == "Shortage":
-            self.console.print(f"  Supply status: [red]{status}[/red]")
-        elif status == "Surplus":
-            self.console.print(f"  Supply status: [green]{status}[/green]")
-        elif status == "Balanced":
-            self.console.print(f"  Supply status: [yellow]{status}[/yellow]")
-        else:
-            self.console.print(f"  Supply status: [dim]{status}[/dim]")
-        self.console.print()
+                # Color-code supply status for storage-based
+                status = stats.supply_status
+                if status == "Shortage":
+                    self.console.print(f"  Supply status: [red]{status}[/red]")
+                elif status == "Surplus":
+                    self.console.print(f"  Supply status: [green]{status}[/green]")
+                elif status == "Balanced":
+                    self.console.print(f"  Supply status: [yellow]{status}[/yellow]")
+                else:
+                    self.console.print(f"  Supply status: [dim]{status}[/dim]")
+                self.console.print()
+            else:
+                # No production or consumption data
+                self.console.print(f"[dim]No production or consumption activity tracked[/dim]")
+                self.console.print()
 
         # Producing stations
         if stats.producing_stations:
@@ -632,20 +647,53 @@ class ViewRenderer:
                 self.console.print(f"  - {consumer.ware.name} ({consumer.module_count} modules)")
             self.console.print()
 
-        # Recommendations
+        # Recommendations based on supply status
         if stats.supply_status == "Shortage":
             self.console.print("[bold red]RECOMMENDATION:[/bold red]")
-            shortage_percent = stats.production_utilization - 100
-            self.console.print(f"  Demand exceeds production by {shortage_percent:.0f}%")
-            if stats.module_count > 0:
-                modules_needed = int(stats.module_count * (shortage_percent / 100)) + 1
-                self.console.print(f"  Consider adding ~{modules_needed} more production modules")
+            if stats.has_rate_data and stats.production_rate_per_hour > 0:
+                # Use rate-based calculation
+                deficit = stats.consumption_rate_per_hour - stats.production_rate_per_hour
+                deficit_percent = (deficit / stats.production_rate_per_hour) * 100
+                self.console.print(f"  Consumption exceeds production by {deficit:,.0f}/hr ({deficit_percent:.0f}%)")
+                if stats.module_count > 0:
+                    modules_needed = max(1, int(stats.module_count * deficit_percent / 100))
+                    self.console.print(f"  Consider adding ~{modules_needed} more production modules")
+            elif stats.has_rate_data and stats.consumption_rate_per_hour > 0:
+                # No production but there is consumption
+                if stats.ware.category == WareCategory.RAW:
+                    self.console.print(f"  Consumption: {stats.consumption_rate_per_hour:,.0f}/hr with insufficient mining capacity")
+                    self.console.print(f"  Consider assigning more miners to stations consuming this resource")
+                else:
+                    self.console.print(f"  Consumption: {stats.consumption_rate_per_hour:,.0f}/hr with no production")
+                    self.console.print(f"  Consider building production modules or purchasing from NPCs")
+            else:
+                # Storage-based fallback
+                shortage_percent = stats.production_utilization - 100 if stats.production_utilization > 0 else 100
+                self.console.print(f"  Demand exceeds production capacity")
+                if stats.module_count > 0 and shortage_percent > 0:
+                    modules_needed = int(stats.module_count * (shortage_percent / 100)) + 1
+                    self.console.print(f"  Consider adding ~{modules_needed} more production modules")
             self.console.print()
-        elif stats.supply_status == "Surplus" and stats.production_utilization < 50:
-            self.console.print("[bold yellow]NOTE:[/bold yellow]")
-            self.console.print(f"  Production significantly exceeds internal demand")
-            self.console.print(f"  Excess may be sold to NPC factions for profit")
-            self.console.print()
+        elif stats.supply_status == "Surplus":
+            # Only show surplus note for significant oversupply
+            if stats.has_rate_data:
+                if stats.consumption_rate_per_hour > 0:
+                    ratio = stats.production_rate_per_hour / stats.consumption_rate_per_hour
+                    if ratio > 2:  # More than 2x production vs consumption
+                        self.console.print("[bold yellow]NOTE:[/bold yellow]")
+                        self.console.print(f"  Production significantly exceeds internal demand ({ratio:.1f}x)")
+                        self.console.print(f"  Excess may be sold to NPC factions for profit")
+                        self.console.print()
+                else:
+                    # Production with no internal consumption - all for export
+                    self.console.print("[bold yellow]NOTE:[/bold yellow]")
+                    self.console.print(f"  No internal consumption - all production available for export")
+                    self.console.print()
+            elif stats.production_utilization < 50 and stats.production_utilization > 0:
+                self.console.print("[bold yellow]NOTE:[/bold yellow]")
+                self.console.print(f"  Production significantly exceeds internal demand")
+                self.console.print(f"  Excess may be sold to NPC factions for profit")
+                self.console.print()
 
         self._wait_for_enter("ware list")
 
