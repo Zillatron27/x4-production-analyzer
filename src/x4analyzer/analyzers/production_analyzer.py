@@ -32,6 +32,10 @@ class ProductionStats:
         self.station_production_rates: Dict[str, float] = {}  # station_name -> units/hour produced
         self.station_consumption_rates: Dict[str, float] = {}  # station_name -> units/hour consumed
 
+        # Mining capacity (for raw materials)
+        self.mining_ship_count: int = 0  # Number of miners assigned to stations consuming this ware
+        self.mining_cargo_capacity: int = 0  # Total cargo capacity of those miners
+
     @property
     def capacity_percent(self) -> float:
         """Calculate overall stock vs capacity utilization (storage fill level)."""
@@ -123,6 +127,36 @@ class ProductionStats:
             self.consuming_stations[station_name] = 0
         self.consuming_stations[station_name] += demand_amount
 
+    def add_mining_capacity(self, ship_count: int, cargo_capacity: int):
+        """Add mining capacity from miners assigned to stations consuming this ware."""
+        self.mining_ship_count += ship_count
+        self.mining_cargo_capacity += cargo_capacity
+
+    @property
+    def mining_coverage_status(self) -> str:
+        """
+        Get mining coverage status for raw materials.
+
+        Compares mining cargo capacity to consumption rate.
+        Returns status: "Sufficient", "Marginal", "Insufficient", or "No Miners"
+        """
+        if self.mining_ship_count == 0:
+            return "No Miners"
+
+        if not self.has_rate_data or self.consumption_rate_per_hour == 0:
+            # Can't determine coverage without consumption rate
+            return f"{self.mining_ship_count} miners"
+
+        # Compare mining capacity to consumption rate
+        # Rough heuristic: if cargo capacity >= consumption/hr, miners can probably keep up
+        # (depends on mining speed, distance, etc. but gives a ballpark)
+        if self.mining_cargo_capacity >= self.consumption_rate_per_hour * 1.5:
+            return "Sufficient"
+        elif self.mining_cargo_capacity >= self.consumption_rate_per_hour:
+            return "Marginal"
+        else:
+            return "Insufficient"
+
     def get_station_production_rate(self, station_name: str) -> float:
         """Get production rate for a specific station (units/hour)."""
         return self.station_production_rates.get(station_name, 0.0)
@@ -144,6 +178,20 @@ class ProductionAnalyzer:
         self._production_stats: Dict[Ware, ProductionStats] = {}
         self._analyze()
 
+    # Define which raw materials can be mined by which cargo type
+    # Solid miners: ore, silicon, nividium, rawscrap
+    # Liquid/Gas miners: hydrogen, helium, methane, ice (ice can be either)
+    RAW_MATERIAL_CARGO_TYPES = {
+        "ore": "solid",
+        "silicon": "solid",
+        "nividium": "solid",
+        "rawscrap": "solid",
+        "hydrogen": "liquid",
+        "helium": "liquid",
+        "methane": "liquid",
+        "ice": "liquid",  # Ice is typically collected by gas miners
+    }
+
     def _analyze(self):
         """Perform initial analysis of production data."""
         # First pass: Build production statistics
@@ -157,6 +205,9 @@ class ProductionAnalyzer:
 
         # Second pass: Track consumption demand from all stations
         self._analyze_consumption()
+
+        # Third pass: Track mining capacity for raw materials
+        self._analyze_mining_capacity()
 
     def _analyze_consumption(self):
         """Analyze consumption demand across all stations."""
@@ -191,6 +242,67 @@ class ProductionAnalyzer:
                     # This includes raw materials, wares consumed by wharfs/shipyards, etc.
                     self._production_stats[ware] = ProductionStats(ware)
                 self._production_stats[ware].add_consumption(station.name, demand)
+
+    def _analyze_mining_capacity(self):
+        """
+        Analyze mining capacity for raw materials.
+
+        For each raw material, count the miners assigned to stations that consume it,
+        and sum up their cargo capacity.
+        """
+        from ..models.ware_database import get_ware
+        from ..models.entities import WareCategory
+
+        # Track which stations consume which raw materials
+        raw_material_consumers: Dict[str, List[str]] = {}  # ware_id -> list of station_names
+
+        for stats in self._production_stats.values():
+            if stats.ware.category == WareCategory.RAW:
+                ware_id = stats.ware.ware_id.lower()
+                raw_material_consumers[ware_id] = list(stats.consuming_stations.keys())
+
+        # For each station, check if it has miners that can supply its raw material needs
+        for station in self.empire.stations:
+            # Get miners at this station
+            miners = station.miners
+
+            if not miners:
+                continue
+
+            # Categorize miners by cargo type
+            solid_miners = []
+            liquid_miners = []
+
+            for miner in miners:
+                cargo_tags = miner.cargo_tags.lower() if miner.cargo_tags else ""
+                if "solid" in cargo_tags:
+                    solid_miners.append(miner)
+                elif "liquid" in cargo_tags or "gas" in cargo_tags:
+                    liquid_miners.append(miner)
+                else:
+                    # Unknown type - check macro for hints
+                    macro = miner.ship_class.lower()
+                    if "liquid" in macro or "gas" in macro:
+                        liquid_miners.append(miner)
+                    else:
+                        solid_miners.append(miner)  # Default to solid
+
+            # For each raw material this station consumes, add mining capacity
+            for ware_id, consuming_stations in raw_material_consumers.items():
+                if station.name not in consuming_stations:
+                    continue
+
+                # Determine which miners can supply this raw material
+                cargo_type = self.RAW_MATERIAL_CARGO_TYPES.get(ware_id, "solid")
+                relevant_miners = solid_miners if cargo_type == "solid" else liquid_miners
+
+                if relevant_miners:
+                    ware = get_ware(ware_id)
+                    if ware in self._production_stats:
+                        total_cargo = sum(m.cargo_capacity for m in relevant_miners)
+                        self._production_stats[ware].add_mining_capacity(
+                            len(relevant_miners), total_cargo
+                        )
 
     def get_supply_shortages(self) -> List[ProductionStats]:
         """Get wares with supply shortages (demand exceeds production)."""

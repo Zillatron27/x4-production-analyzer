@@ -59,6 +59,8 @@ class ParsedShip:
     purpose: str = ""
     cargo_capacity: int = 0
     commander_id: Optional[str] = None  # Station or fleet commander this ship is assigned to
+    order_type: str = ""  # "MiningRoutine", "TradeRoutine", etc.
+    mining_ware: str = ""  # What ware this ship is mining (if any)
 
 
 class StreamingParser:
@@ -69,8 +71,9 @@ class StreamingParser:
     the entire tree into memory.
     """
 
-    def __init__(self, file_path: str):
+    def __init__(self, file_path: str, ships_extractor=None):
         self.file_path = Path(file_path)
+        self._ships_extractor = ships_extractor  # Optional ShipsExtractor for cargo capacity lookup
 
         # Lightweight storage during parsing
         self._stations: Dict[str, ParsedStation] = {}
@@ -257,6 +260,37 @@ class StreamingParser:
                         if ship:
                             ship.commander_id = connected_id
                             logger.debug(f"Ship {current_player_ship_id} commander connected to {connected_id}")
+
+                # Parse ship orders to determine what they're mining/trading
+                if tag == 'order' and current_player_ship_id:
+                    order_type = elem.get('order', '')
+                    is_default = elem.get('default') == '1'
+                    ship = self._ships.get(current_player_ship_id)
+                    if ship and is_default and order_type:
+                        ship.order_type = order_type
+                        # For mining orders, we'll capture the warebasket from param elements
+                        if order_type == 'MiningRoutine':
+                            # The warebasket param will be captured below
+                            pass
+
+                # Parse order parameters (specifically warebasket for mining)
+                if tag == 'param' and current_player_ship_id:
+                    param_name = elem.get('name', '')
+                    if param_name == 'warebasket':
+                        # warebasket contains ware IDs for what the ship is mining
+                        # It can be a list value like "15071" which maps to wares
+                        ship = self._ships.get(current_player_ship_id)
+                        if ship and ship.order_type == 'MiningRoutine':
+                            # The value is an internal ID, but we can also check warebasket_override
+                            pass
+                    elif param_name == 'warebasket_override':
+                        # This is more reliable - contains actual ware override
+                        ship = self._ships.get(current_player_ship_id)
+                        if ship and ship.order_type == 'MiningRoutine':
+                            # Value is internal ID, we'll resolve in post-processing
+                            value = elem.get('value', '')
+                            if value:
+                                ship.mining_ware = value  # Store for now, resolve later
 
                 # Track when we exit a ships connection
                 if tag == 'connection':
@@ -537,13 +571,17 @@ class StreamingParser:
                 ship_data = self._ships.get(sub_id)
                 if ship_data:
                     ship_type = self._determine_ship_type(ship_data)
+                    cargo_capacity, cargo_tags = self._get_ship_cargo_info(ship_data)
                     ship = Ship(
                         ship_id=ship_data.ship_id,
                         name=ship_data.name,
                         ship_class=ship_data.macro,
                         ship_type=ship_type,
-                        cargo_capacity=ship_data.cargo_capacity,
-                        assigned_station_id=station_id
+                        cargo_capacity=cargo_capacity,
+                        assigned_station_id=station_id,
+                        cargo_tags=cargo_tags,
+                        mining_ware=ship_data.mining_ware,
+                        order_type=ship_data.order_type
                     )
                     station.assigned_ships.append(ship)
                     assigned_ship_ids.add(sub_id)
@@ -554,13 +592,17 @@ class StreamingParser:
         for ship_id, ship_data in self._ships.items():
             if ship_data.owner == 'player' and ship_id not in assigned_ship_ids and ship_id not in fleet_ship_ids:
                 ship_type = self._determine_ship_type(ship_data)
+                cargo_capacity, cargo_tags = self._get_ship_cargo_info(ship_data)
                 ship = Ship(
                     ship_id=ship_data.ship_id,
                     name=ship_data.name,
                     ship_class=ship_data.macro,
                     ship_type=ship_type,
-                    cargo_capacity=ship_data.cargo_capacity,
-                    assigned_station_id=None
+                    cargo_capacity=cargo_capacity,
+                    assigned_station_id=None,
+                    cargo_tags=cargo_tags,
+                    mining_ware=ship_data.mining_ware,
+                    order_type=ship_data.order_type
                 )
                 empire.unassigned_ships.append(ship)
 
@@ -589,6 +631,24 @@ class StreamingParser:
             macro_lower = macro_lower.replace(suffix, '')
 
         return macro_lower
+
+    def _get_ship_cargo_info(self, ship: ParsedShip) -> tuple:
+        """
+        Get cargo capacity and tags for a ship.
+
+        Returns:
+            Tuple of (cargo_capacity, cargo_tags)
+        """
+        cargo_capacity = 0
+        cargo_tags = ""
+
+        if self._ships_extractor:
+            ship_info = self._ships_extractor.get_ship_info(ship.macro)
+            if ship_info:
+                cargo_capacity = ship_info.cargo_capacity
+                cargo_tags = ship_info.cargo_tags
+
+        return cargo_capacity, cargo_tags
 
     def _determine_ship_type(self, ship: ParsedShip) -> str:
         """Determine ship type from purpose and macro."""

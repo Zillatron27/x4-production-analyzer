@@ -69,6 +69,9 @@ class Ship:
     ship_type: str  # trader, miner, etc.
     cargo_capacity: int = 0
     assigned_station_id: Optional[str] = None
+    cargo_tags: str = ""  # What this ship can carry: "solid", "liquid", "container"
+    mining_ware: str = ""  # What ware this ship is mining (if any)
+    order_type: str = ""  # Current order type: "MiningRoutine", "TradeRoutine", etc.
 
 
 @dataclass

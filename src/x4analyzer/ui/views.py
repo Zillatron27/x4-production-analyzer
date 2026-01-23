@@ -338,7 +338,24 @@ class ViewRenderer:
         if station.assigned_ships:
             self.console.print(f"[bold]Assigned Ships: {len(station.assigned_ships)}[/bold]")
             self.console.print(f"  Traders: [green]{len(station.traders)}[/green]")
-            self.console.print(f"  Miners: [green]{len(station.miners)}[/green]")
+
+            miners = station.miners
+            if miners:
+                miner_cargo = sum(m.cargo_capacity for m in miners)
+                self.console.print(f"  Miners: [green]{len(miners)}[/green] (cargo capacity: {miner_cargo:,})")
+
+                # Show breakdown by cargo type
+                solid_miners = [m for m in miners if "solid" in m.cargo_tags.lower()]
+                liquid_miners = [m for m in miners if "liquid" in m.cargo_tags.lower()]
+                if solid_miners:
+                    solid_cargo = sum(m.cargo_capacity for m in solid_miners)
+                    self.console.print(f"    Solid miners: {len(solid_miners)} ({solid_cargo:,} cargo)")
+                if liquid_miners:
+                    liquid_cargo = sum(m.cargo_capacity for m in liquid_miners)
+                    self.console.print(f"    Liquid/Gas miners: {len(liquid_miners)} ({liquid_cargo:,} cargo)")
+            else:
+                self.console.print(f"  Miners: [green]0[/green]")
+
             self.console.print(f"  Total Cargo: {station.total_cargo_capacity:,}\n")
 
         self._wait_for_enter("station list")

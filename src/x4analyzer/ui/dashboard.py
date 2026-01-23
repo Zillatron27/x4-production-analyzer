@@ -73,57 +73,87 @@ class Dashboard:
 
         # Check if we have rate data available
         has_rates = self.analyzer.has_rate_data
+        is_raw_materials = category == WareCategory.RAW
 
         # Create table with appropriate columns
         table = Table(show_header=True, header_style="bold", box=None, padding=(0, 1))
         table.add_column("Ware", style="cyan")
-        table.add_column("Modules", justify="right", style="green")
-        if has_rates:
+
+        if is_raw_materials:
+            # Special columns for raw materials - show mining capacity
+            table.add_column("Cons/hr", justify="right")
+            table.add_column("Miners", justify="right", style="green")
+            table.add_column("Cargo Cap", justify="right")
+            table.add_column("Mining Status", justify="left")
+        elif has_rates:
+            table.add_column("Modules", justify="right", style="green")
             table.add_column("Prod/hr", justify="right")
             table.add_column("Cons/hr", justify="right")
             table.add_column("Balance", justify="right")
+            table.add_column("Status", justify="left")
         else:
+            table.add_column("Modules", justify="right", style="green")
             table.add_column("Stock", justify="right")
             table.add_column("Supply/Demand", justify="left")
-        table.add_column("Status", justify="left")
+            table.add_column("Status", justify="left")
 
         for stats in stats_list:
-            # Color-code supply status
-            status = stats.supply_status
-            if status == "Shortage":
-                status_display = f"[red]{status}[/red]"
-            elif status == "Surplus":
-                status_display = f"[yellow]{status}[/yellow]"
-            elif status == "Balanced":
-                status_display = f"[green]{status}[/green]"
-            else:
-                status_display = f"[dim]{status}[/dim]"
+            if is_raw_materials:
+                # Display raw materials with mining info
+                cons_rate = stats.consumption_rate_per_hour
+                cons_display = f"{cons_rate:,.0f}" if cons_rate > 0 else "[dim]0[/dim]"
 
-            if has_rates:
-                # Show rate-based data
+                miners_display = str(stats.mining_ship_count) if stats.mining_ship_count > 0 else "[dim]0[/dim]"
+                cargo_display = f"{stats.mining_cargo_capacity:,}" if stats.mining_cargo_capacity > 0 else "[dim]0[/dim]"
+
+                # Mining coverage status with colors
+                mining_status = stats.mining_coverage_status
+                if mining_status == "Sufficient":
+                    status_display = f"[green]{mining_status}[/green]"
+                elif mining_status == "Marginal":
+                    status_display = f"[yellow]{mining_status}[/yellow]"
+                elif mining_status == "Insufficient":
+                    status_display = f"[red]{mining_status}[/red]"
+                elif mining_status == "No Miners":
+                    if cons_rate > 0:
+                        status_display = f"[red]{mining_status}[/red]"
+                    else:
+                        status_display = f"[dim]No Demand[/dim]"
+                else:
+                    status_display = f"[dim]{mining_status}[/dim]"
+
+                table.add_row(
+                    stats.ware.name,
+                    cons_display,
+                    miners_display,
+                    cargo_display,
+                    status_display
+                )
+            elif has_rates:
+                # Show rate-based data for produced wares
                 prod_rate = stats.production_rate_per_hour
                 cons_rate = stats.consumption_rate_per_hour
                 balance = stats.rate_balance
 
-                # Format production (0 for consumed-only wares like raw materials)
-                if prod_rate > 0:
-                    prod_display = f"{prod_rate:,.0f}"
-                else:
-                    prod_display = "[dim]0[/dim]"
+                prod_display = f"{prod_rate:,.0f}" if prod_rate > 0 else "[dim]0[/dim]"
+                cons_display = f"{cons_rate:,.0f}" if cons_rate > 0 else "[dim]0[/dim]"
 
-                # Format consumption
-                if cons_rate > 0:
-                    cons_display = f"{cons_rate:,.0f}"
-                else:
-                    cons_display = "[dim]0[/dim]"
-
-                # Format balance with color
                 if balance > 0:
                     balance_display = f"[green]+{balance:,.0f}[/green]"
                 elif balance < 0:
                     balance_display = f"[red]{balance:,.0f}[/red]"
                 else:
                     balance_display = "[dim]0[/dim]"
+
+                status = stats.supply_status
+                if status == "Shortage":
+                    status_display = f"[red]{status}[/red]"
+                elif status == "Surplus":
+                    status_display = f"[yellow]{status}[/yellow]"
+                elif status == "Balanced":
+                    status_display = f"[green]{status}[/green]"
+                else:
+                    status_display = f"[dim]{status}[/dim]"
 
                 table.add_row(
                     stats.ware.name,
@@ -135,6 +165,16 @@ class Dashboard:
                 )
             else:
                 # Fallback to storage-based display
+                status = stats.supply_status
+                if status == "Shortage":
+                    status_display = f"[red]{status}[/red]"
+                elif status == "Surplus":
+                    status_display = f"[yellow]{status}[/yellow]"
+                elif status == "Balanced":
+                    status_display = f"[green]{status}[/green]"
+                else:
+                    status_display = f"[dim]{status}[/dim]"
+
                 utilization_bar = self._create_utilization_bar(stats.production_utilization)
                 table.add_row(
                     stats.ware.name,

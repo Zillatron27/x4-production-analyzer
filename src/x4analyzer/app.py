@@ -24,6 +24,7 @@ class X4Analyzer:
         self.views = None
         self._current_save_path = None
         self._wares_extractor = None
+        self._ships_extractor = None
 
     def load_save_file(self, file_path: str = None):
         """Load and parse a save file."""
@@ -36,9 +37,12 @@ class X4Analyzer:
             return False
 
         try:
+            # Load game data first (needed for ship cargo capacity during parsing)
+            self._load_game_data_for_parsing()
+
             # Parse save file using memory-efficient streaming parser
             self.console.print("[cyan]Parsing save file (streaming mode)...[/cyan]")
-            parser = StreamingParser(file_path)
+            parser = StreamingParser(file_path, ships_extractor=self._ships_extractor)
 
             def progress_callback(msg, count):
                 self.console.print(f"[cyan]{msg}[/cyan]")
@@ -49,8 +53,8 @@ class X4Analyzer:
             self.console.print("[cyan]Analyzing production data...[/cyan]")
             self.analyzer = ProductionAnalyzer(self.empire)
 
-            # Try to load game data for accurate production rates
-            self._load_game_data()
+            # Load production rate data for analysis
+            self._load_game_data_for_analysis()
 
             # Setup UI
             self.dashboard = Dashboard(self.empire, self.analyzer)
@@ -137,8 +141,27 @@ class X4Analyzer:
 
             return self.console.input("\nEnter save file path: ").strip()
 
-    def _load_game_data(self, force_reload: bool = False):
-        """Try to load game data for accurate production rates."""
+    def _load_game_data_for_parsing(self):
+        """Load ship data needed during parsing (for cargo capacity)."""
+        game_dir = self.config_manager.get_game_directory()
+
+        if not game_dir:
+            self.console.print("[dim]Game directory not found - ship cargo data unavailable[/dim]")
+            return
+
+        try:
+            from .game_data import ShipsExtractor
+
+            cache_dir = self.config_manager.config.cache_directory
+            self._ships_extractor = ShipsExtractor(game_dir, cache_dir)
+            self.console.print("[cyan]Loading ship data...[/cyan]")
+            self._ships_extractor.extract()
+
+        except Exception as e:
+            self.console.print(f"[dim]Ship data unavailable: {e}[/dim]")
+
+    def _load_game_data_for_analysis(self, force_reload: bool = False):
+        """Load ware production data for analysis."""
         game_dir = self.config_manager.get_game_directory()
 
         if not game_dir:
@@ -155,7 +178,7 @@ class X4Analyzer:
                 self.console.print("[cyan]Extracting game data from game files...[/cyan]")
                 self._wares_extractor.extract(force_reload=True)
             else:
-                self.console.print("[cyan]Loading game data...[/cyan]")
+                self.console.print("[cyan]Loading production data...[/cyan]")
                 self._wares_extractor.extract()
 
             if self.analyzer.load_game_data(self._wares_extractor):
@@ -165,6 +188,11 @@ class X4Analyzer:
 
         except Exception as e:
             self.console.print(f"[dim]Game data unavailable: {e}[/dim]")
+
+    def _load_game_data(self, force_reload: bool = False):
+        """Load all game data (for refresh)."""
+        self._load_game_data_for_parsing()
+        self._load_game_data_for_analysis(force_reload)
 
     def _refresh_game_data(self):
         """Force refresh game data from game files."""
