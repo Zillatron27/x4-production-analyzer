@@ -1,7 +1,7 @@
 """Main application entry point."""
 
 import sys
-from pathlib import Path
+from typing import Optional
 from rich.console import Console
 from rich.table import Table
 
@@ -26,7 +26,7 @@ class X4Analyzer:
         self._wares_extractor = None
         self._ships_extractor = None
 
-    def load_save_file(self, file_path: str = None):
+    def load_save_file(self, file_path: Optional[str] = None):
         """Load and parse a save file."""
         # Try to find save file if not provided
         if not file_path:
@@ -81,7 +81,7 @@ class X4Analyzer:
                 raise
             return False
 
-    def _select_save_file(self) -> str:
+    def _select_save_file(self) -> Optional[str]:
         """Display save file selection menu."""
         self.console.print("[cyan]X4 Save File Selection[/cyan]\n")
 

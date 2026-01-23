@@ -3,9 +3,7 @@
 from rich.console import Console
 from rich.table import Table
 from rich.panel import Panel
-from rich.layout import Layout
 from rich.text import Text
-from rich.progress import BarColumn, Progress
 from typing import List
 
 from ..models.entities import EmpireData, WareCategory
@@ -118,7 +116,7 @@ class Dashboard:
                     if cons_rate > 0:
                         status_display = f"[red]{mining_status}[/red]"
                     else:
-                        status_display = f"[dim]No Demand[/dim]"
+                        status_display = "[dim]No Demand[/dim]"
                 else:
                     status_display = f"[dim]{mining_status}[/dim]"
 

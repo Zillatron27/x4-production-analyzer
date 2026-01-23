@@ -1,9 +1,8 @@
 """Reader for X4 catalog (.cat) and data (.dat) file pairs."""
 
 import logging
-import struct
 from pathlib import Path
-from typing import Dict, Optional, List, BinaryIO
+from typing import Dict, Optional, List
 from dataclasses import dataclass
 
 logger = logging.getLogger("x4analyzer.game_data")
@@ -126,7 +125,7 @@ class CatalogReader:
 
         return entries
 
-    def list_files(self, pattern: str = None) -> List[str]:
+    def list_files(self, pattern: Optional[str] = None) -> List[str]:
         """List all files in the catalogs, optionally filtered by pattern."""
         files = list(self.entries.keys())
 

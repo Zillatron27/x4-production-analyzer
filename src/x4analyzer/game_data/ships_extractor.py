@@ -49,7 +49,7 @@ class ShipsExtractor:
 
     CACHE_FILENAME = "ships_cache.json"
 
-    def __init__(self, game_directory: Path, cache_directory: Path = None):
+    def __init__(self, game_directory: Path, cache_directory: Optional[Path] = None):
         """Initialize with game and cache directories."""
         self.game_dir = Path(game_directory)
         self.cache_dir = Path(cache_directory) if cache_directory else Path.home() / ".cache" / "x4analyzer"

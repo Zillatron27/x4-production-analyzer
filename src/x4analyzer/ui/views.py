@@ -2,8 +2,6 @@
 
 from rich.console import Console
 from rich.table import Table
-from rich.panel import Panel
-from rich.text import Text
 import json
 import csv
 from pathlib import Path
@@ -17,7 +15,7 @@ class ViewRenderer:
     """Renders different view screens."""
 
     def __init__(self, empire: EmpireData, analyzer: ProductionAnalyzer,
-                 config_manager=None, save_file_path: str = None):
+                 config_manager=None, save_file_path: Optional[str] = None):
         self.empire = empire
         self.analyzer = analyzer
         self.console = Console()
@@ -131,9 +129,6 @@ class ViewRenderer:
 
             if not choice or choice.lower() == 'b':
                 return
-
-            # Convert to lowercase for text search (but preserve case for number check)
-            choice_lower = choice.lower()
 
             # Check if it's a number
             if choice.isdigit():
@@ -354,7 +349,7 @@ class ViewRenderer:
                     liquid_cargo = sum(m.cargo_capacity for m in liquid_miners)
                     self.console.print(f"    Liquid/Gas miners: {len(liquid_miners)} ({liquid_cargo:,} cargo)")
             else:
-                self.console.print(f"  Miners: [green]0[/green]")
+                self.console.print("  Miners: [green]0[/green]")
 
             self.console.print(f"  Total Cargo: {station.total_cargo_capacity:,}\n")
 
@@ -687,7 +682,7 @@ class ViewRenderer:
                 demands_str = ", ".join(f"{get_ware(w).name}: {d:,}" for w, d in top_demands)
                 self.console.print(f"  Top demands: {demands_str}")
             else:
-                self.console.print(f"  [dim]No active trade orders[/dim]")
+                self.console.print("  [dim]No active trade orders[/dim]")
 
         self.console.print()
         self._wait_for_enter()
@@ -765,7 +760,7 @@ class ViewRenderer:
             elif balance < 0:
                 self.console.print(f"  Net balance: [red]{balance:,.0f}[/red] units/hour (deficit)")
             else:
-                self.console.print(f"  Net balance: [yellow]0[/yellow] units/hour (balanced)")
+                self.console.print("  Net balance: [yellow]0[/yellow] units/hour (balanced)")
 
             # Empire status based on rates
             status = stats.supply_status
@@ -799,7 +794,7 @@ class ViewRenderer:
                 self.console.print()
             else:
                 # No production or consumption data
-                self.console.print(f"[dim]No production or consumption activity tracked[/dim]")
+                self.console.print("[dim]No production or consumption activity tracked[/dim]")
                 self.console.print()
 
         # Producing stations
@@ -857,7 +852,7 @@ class ViewRenderer:
                 if consumer.ware.ware_id not in unique_consumers:
                     unique_consumers[consumer.ware.ware_id] = consumer
 
-            self.console.print(f"[bold yellow]Used To Produce:[/bold yellow]")
+            self.console.print("[bold yellow]Used To Produce:[/bold yellow]")
             for consumer in unique_consumers.values():
                 self.console.print(f"  - {consumer.ware.name} ({consumer.module_count} modules)")
             self.console.print()
@@ -877,14 +872,14 @@ class ViewRenderer:
                 # No production but there is consumption
                 if stats.ware.category == WareCategory.RAW:
                     self.console.print(f"  Consumption: {stats.consumption_rate_per_hour:,.0f}/hr with insufficient mining capacity")
-                    self.console.print(f"  Consider assigning more miners to stations consuming this resource")
+                    self.console.print("  Consider assigning more miners to stations consuming this resource")
                 else:
                     self.console.print(f"  Consumption: {stats.consumption_rate_per_hour:,.0f}/hr with no production")
-                    self.console.print(f"  Consider building production modules or purchasing from NPCs")
+                    self.console.print("  Consider building production modules or purchasing from NPCs")
             else:
                 # Storage-based fallback
                 shortage_percent = stats.production_utilization - 100 if stats.production_utilization > 0 else 100
-                self.console.print(f"  Demand exceeds production capacity")
+                self.console.print("  Demand exceeds production capacity")
                 if stats.module_count > 0 and shortage_percent > 0:
                     modules_needed = int(stats.module_count * (shortage_percent / 100)) + 1
                     self.console.print(f"  Consider adding ~{modules_needed} more production modules")
@@ -897,17 +892,17 @@ class ViewRenderer:
                     if ratio > 2:  # More than 2x production vs consumption
                         self.console.print("[bold yellow]NOTE:[/bold yellow]")
                         self.console.print(f"  Production significantly exceeds internal demand ({ratio:.1f}x)")
-                        self.console.print(f"  Excess may be sold to NPC factions for profit")
+                        self.console.print("  Excess may be sold to NPC factions for profit")
                         self.console.print()
                 else:
                     # Production with no internal consumption - all for export
                     self.console.print("[bold yellow]NOTE:[/bold yellow]")
-                    self.console.print(f"  No internal consumption - all production available for export")
+                    self.console.print("  No internal consumption - all production available for export")
                     self.console.print()
             elif stats.production_utilization < 50 and stats.production_utilization > 0:
                 self.console.print("[bold yellow]NOTE:[/bold yellow]")
-                self.console.print(f"  Production significantly exceeds internal demand")
-                self.console.print(f"  Excess may be sold to NPC factions for profit")
+                self.console.print("  Production significantly exceeds internal demand")
+                self.console.print("  Excess may be sold to NPC factions for profit")
                 self.console.print()
 
         self._wait_for_enter("ware list")
@@ -1211,14 +1206,14 @@ class ViewRenderer:
                 self.console.print("  [dim]No save file loaded[/dim]")
 
             # Empire info from save
-            self.console.print(f"\n[bold]Empire Info:[/bold]")
+            self.console.print("\n[bold]Empire Info:[/bold]")
             self.console.print(f"  Commander: [cyan]{self.empire.player_name}[/cyan]")
             self.console.print(f"  Save Timestamp: {self.empire.save_timestamp}")
             self.console.print(f"  Stations: {len(self.empire.stations)}")
             self.console.print(f"  Total Ships: {len(self.empire.all_ships)}")
 
             # Game data info
-            self.console.print(f"\n[bold]Game Data:[/bold]")
+            self.console.print("\n[bold]Game Data:[/bold]")
             if self.config_manager:
                 game_dir = self.config_manager.get_game_directory()
                 if game_dir:
@@ -1245,7 +1240,7 @@ class ViewRenderer:
                 self.console.print("  Production Rates: [yellow]Using estimates[/yellow]")
 
             # Menu options
-            self.console.print(f"\n[bold]Actions:[/bold]")
+            self.console.print("\n[bold]Actions:[/bold]")
             self.console.print("  [G] Refresh Game Data  - Re-extract wares from game files")
             self.console.print("  [R] Reload Save File   - Re-parse the current save file")
             self.console.print("  [B] Back               - Return to main menu")

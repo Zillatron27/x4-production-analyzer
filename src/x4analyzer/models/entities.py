@@ -181,7 +181,7 @@ class EmpireData:
 
     def get_production_by_ware(self) -> Dict[Ware, List[ProductionModule]]:
         """Group production modules by output ware."""
-        production_map = {}
+        production_map: Dict[Ware, List[ProductionModule]] = {}
         for station in self.stations:
             for module in station.production_modules:
                 if module.output_ware:

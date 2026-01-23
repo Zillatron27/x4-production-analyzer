@@ -1,7 +1,7 @@
 """Production analysis and statistics."""
 
 import logging
-from typing import Dict, List, Optional
+from typing import Any, Dict, List, Optional
 from collections import defaultdict
 
 from ..models.entities import (
@@ -368,7 +368,7 @@ class ProductionAnalyzer:
         """Get all production stats sorted by module count."""
         return sorted(self._production_stats.values(), key=lambda s: s.module_count, reverse=True)
 
-    def get_ware_stats(self, ware_id: str) -> ProductionStats:
+    def get_ware_stats(self, ware_id: str) -> Optional[ProductionStats]:
         """Get statistics for a specific ware."""
         for stats in self._production_stats.values():
             if stats.ware.ware_id == ware_id or stats.ware.name.lower() == ware_id.lower():
@@ -422,8 +422,6 @@ class ProductionAnalyzer:
 
         # Find consumers - wares whose production consumes this ware
         # by checking which wares are consumed at stations that produce them
-        target_ware_id = target_stats.ware.ware_id.lower()
-
         for stats in self._production_stats.values():
             if stats.ware.ware_id == target_stats.ware.ware_id:
                 continue
@@ -704,9 +702,9 @@ class ProductionAnalyzer:
         - consumed_wares: List of {ware, rate} for each consumed ware
         - net_rates: List of {ware, net_rate} where net_rate = production - consumption
         """
-        produced = []
-        consumed = []
-        net_rates = {}
+        produced: List[Dict[str, Any]] = []
+        consumed: List[Dict[str, Any]] = []
+        net_rates: Dict[str, Dict[str, float]] = {}
 
         # Get production from this station's modules
         for module in station.production_modules:

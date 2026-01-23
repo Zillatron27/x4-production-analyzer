@@ -3,7 +3,7 @@
 import gzip
 import logging
 from pathlib import Path
-from typing import Optional, Callable, Dict, List, Any, Union
+from typing import Optional, Callable, Dict, List, Union, BinaryIO
 from lxml.etree import iterparse
 from dataclasses import dataclass, field
 
@@ -57,6 +57,7 @@ class ParsedStation:
     subordinate_ids: List[str] = field(default_factory=list)
     subordinate_connection_ids: List[str] = field(default_factory=list)  # Connection IDs from <connection connection="subordinates">
     trade_wares: Dict[str, Dict] = field(default_factory=dict)
+    has_defence: bool = False  # Track if station has defence modules
 
 
 @dataclass
@@ -115,7 +116,7 @@ class StreamingParser:
         if not self.file_path.exists():
             raise FileNotFoundError(f"Save file not found: {self.file_path}")
 
-        logger.info(f"=== Starting streaming parse ===")
+        logger.info("=== Starting streaming parse ===")
         logger.info(f"File: {self.file_path}")
         logger.info(f"Size: {self.file_path.stat().st_size / 1024 / 1024:.1f} MB")
 
@@ -123,11 +124,13 @@ class StreamingParser:
             progress_callback("Opening save file...", 0)
 
         # Open file (handle gzip or plain XML)
+        file_handle: BinaryIO
         try:
-            file_handle = gzip.open(self.file_path, 'rb')
+            gzip_handle = gzip.open(self.file_path, 'rb')
             # Test if it's actually gzipped
-            file_handle.read(1)
-            file_handle.seek(0)
+            gzip_handle.read(1)
+            gzip_handle.seek(0)
+            file_handle = gzip_handle  # type: ignore[assignment]
             logger.info("File is gzipped")
         except gzip.BadGzipFile:
             file_handle = open(self.file_path, 'rb')
@@ -157,14 +160,11 @@ class StreamingParser:
 
         # Track element path for context
         path = []
-        current_component = None
         component_stack = []
-        in_ships_connection = False  # Track when inside <connection connection="ships">
 
         # Track current ship being parsed for commander extraction
         current_player_ship_id: Optional[str] = None
         in_commander_connection = False  # Track when inside <connection connection="commander">
-        in_subordinates_connection = False  # Track when inside <connection connection="subordinates">
         current_subordinates_conn_id: Optional[str] = None
 
         if progress_callback:
@@ -176,17 +176,12 @@ class StreamingParser:
             if event == 'start':
                 path.append(tag)
 
-                # Track when we enter a ships connection
-                if tag == 'connection' and elem.get('connection') == 'ships':
-                    in_ships_connection = True
-
                 # Track when we enter a commander connection (inside a ship)
                 if tag == 'connection' and elem.get('connection') == 'commander':
                     in_commander_connection = True
 
                 # Track when we enter a subordinates connection (inside a station or ship)
                 if tag == 'connection' and elem.get('connection') == 'subordinates':
-                    in_subordinates_connection = True
                     current_subordinates_conn_id = elem.get('id', '')
                     # Record this subordinates connection ID for the current station
                     if self._in_player_station and self._current_station_id and current_subordinates_conn_id:
@@ -302,15 +297,12 @@ class StreamingParser:
                             if value:
                                 ship.mining_ware = value  # Store for now, resolve later
 
-                # Track when we exit a ships connection
+                # Track when we exit connection elements
                 if tag == 'connection':
                     conn_type = elem.get('connection', '')
-                    if conn_type == 'ships':
-                        in_ships_connection = False
-                    elif conn_type == 'commander':
+                    if conn_type == 'commander':
                         in_commander_connection = False
                     elif conn_type == 'subordinates':
-                        in_subordinates_connection = False
                         current_subordinates_conn_id = None
 
                 # Save metadata from info element
@@ -386,8 +378,7 @@ class StreamingParser:
 
                         # Track if station has defence modules (for later classification)
                         elif 'defence_' in macro_lower:
-                            if not hasattr(station, '_has_defence'):
-                                station._has_defence = True
+                            station.has_defence = True
 
                 # Process trade data
                 elif tag == 'trade' and self._in_player_station:
@@ -514,7 +505,7 @@ class StreamingParser:
             final_station_type = parsed.station_type
             if final_station_type == 'production':  # Default, may need refinement
                 has_production = len(parsed.modules) > 0
-                has_defence = getattr(parsed, '_has_defence', False)
+                has_defence = parsed.has_defence
 
                 if has_production:
                     final_station_type = 'production'
