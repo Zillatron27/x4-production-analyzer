@@ -60,7 +60,8 @@ class X4Analyzer:
             self.dashboard = Dashboard(self.empire, self.analyzer)
             self.views = ViewRenderer(self.empire, self.analyzer,
                                       config_manager=self.config_manager,
-                                      save_file_path=file_path)
+                                      save_file_path=file_path,
+                                      wares_extractor=self._wares_extractor)
             self._current_save_path = file_path
 
             self.console.print("[green]Load complete![/green]\n")
@@ -221,6 +222,8 @@ class X4Analyzer:
                 self.views.logistics_analysis_view()
             elif choice == 'b':
                 self.views.ship_building_view()
+            elif choice == 'x':
+                self.views.expansion_planner_view()
             elif choice == 'e':
                 self.views.export_report_view()
             elif choice == 'n':

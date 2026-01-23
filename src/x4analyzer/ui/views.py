@@ -15,12 +15,14 @@ class ViewRenderer:
     """Renders different view screens."""
 
     def __init__(self, empire: EmpireData, analyzer: ProductionAnalyzer,
-                 config_manager=None, save_file_path: Optional[str] = None):
+                 config_manager=None, save_file_path: Optional[str] = None,
+                 wares_extractor=None):
         self.empire = empire
         self.analyzer = analyzer
         self.console = Console()
         self.config_manager = config_manager
         self.save_file_path = save_file_path
+        self.wares_extractor = wares_extractor
 
     def capacity_planning_view(self):
         """Display capacity planning analysis with ware list."""
@@ -905,7 +907,232 @@ class ViewRenderer:
                 self.console.print("  Excess may be sold to NPC factions for profit")
                 self.console.print()
 
-        self._wait_for_enter("ware list")
+        # Options
+        self.console.print("─" * 50)
+        if self.wares_extractor and stats.module_count > 0:
+            self.console.print("[dim][X] Analyze expansion  [B] Back[/dim]")
+            choice = self.console.input("\nSelection: ").strip().lower()
+            if choice == 'x':
+                self._expansion_analysis_for_ware(stats)
+        else:
+            self._wait_for_enter("ware list")
+
+    def _expansion_analysis_for_ware(self, stats: ProductionStats):
+        """Prompt for module count and run expansion analysis."""
+        self.console.print(f"\n[bold cyan]EXPANSION ANALYSIS: {stats.ware.name}[/bold cyan]")
+        self.console.print(f"Current: {stats.module_count} modules producing {stats.production_rate_per_hour:,.0f}/hr\n")
+
+        try:
+            modules_input = self.console.input("How many modules to add? ").strip()
+            if not modules_input:
+                return
+            additional = int(modules_input)
+            if additional <= 0:
+                self.console.print("[red]Must add at least 1 module[/red]")
+                self._wait_for_enter()
+                return
+        except ValueError:
+            self.console.print("[red]Invalid number[/red]")
+            self._wait_for_enter()
+            return
+
+        self._run_expansion_analysis(stats.ware.ware_id, additional)
+
+    def _run_expansion_analysis(self, ware_id: str, additional_modules: int):
+        """Run expansion analysis and display results."""
+        from ..analyzers.expansion_planner import calculate_expansion_impact
+
+        self.console.print("\n[cyan]Analyzing expansion impact...[/cyan]\n")
+
+        try:
+            plan = calculate_expansion_impact(
+                ware_id,
+                additional_modules,
+                self.wares_extractor,
+                self.analyzer
+            )
+            self._display_expansion_plan(plan)
+        except ValueError as e:
+            self.console.print(f"[red]Error: {e}[/red]")
+        except Exception as e:
+            self.console.print(f"[red]Analysis failed: {e}[/red]")
+            import sys
+            if "--debug" in sys.argv:
+                raise
+
+        self._wait_for_enter()
+
+    def _display_expansion_plan(self, plan):
+        """Display formatted expansion plan."""
+
+        self.console.print("[bold]EXPANSION IMPACT ANALYSIS[/bold]")
+        self.console.print("═" * 60)
+
+        # Target summary
+        self.console.print(f"\n[bold]Target:[/bold] {plan.target_ware.name}")
+        self.console.print(f"  Current: {plan.current_modules} modules → {plan.current_rate:,.0f} units/hr")
+        self.console.print(f"  Planned: {plan.planned_modules} modules → {plan.planned_rate:,.0f} units/hr")
+        self.console.print(f"  Increase: [green]+{plan.increase_amount:,.0f}/hr (+{plan.increase_percent:.1f}%)[/green]")
+
+        # Input requirements
+        if plan.input_requirements:
+            self.console.print("\n[bold]INPUT REQUIREMENTS[/bold]")
+            self.console.print("─" * 60)
+
+            for req in plan.input_requirements:
+                self._display_input_requirement(req)
+
+        # Bottlenecks
+        if plan.bottlenecks:
+            self.console.print("\n[bold red]BOTTLENECKS DETECTED[/bold red]")
+            self.console.print("─" * 60)
+
+            for bottleneck in plan.bottlenecks:
+                self._display_bottleneck(bottleneck)
+
+        # Feasibility
+        self.console.print()
+        if plan.is_feasible:
+            self.console.print("[bold green]✓ EXPANSION IS FEASIBLE[/bold green]")
+            self.console.print("  All input requirements can be met with current production")
+        else:
+            self.console.print("[bold red]✗ BOTTLENECKS MUST BE RESOLVED[/bold red]")
+
+        # Recommendations
+        if plan.recommendations:
+            self.console.print("\n[bold]RECOMMENDATIONS[/bold]")
+            self.console.print("─" * 60)
+            for rec in plan.recommendations:
+                self.console.print(f"  {rec}")
+
+    def _display_input_requirement(self, req):
+        """Display a single input requirement."""
+        # Status indicator
+        if req.status == "sufficient":
+            symbol = "✓"
+            color = "green"
+        elif req.status == "marginal":
+            symbol = "⚠"
+            color = "yellow"
+        else:
+            symbol = "✗"
+            color = "red"
+
+        self.console.print(f"\n[{color}]{symbol} {req.ware.name}[/{color}]")
+        self.console.print(f"    Current consumption: {req.current_consumption:,.0f}/hr")
+        self.console.print(f"    After expansion: {req.new_consumption:,.0f}/hr ([{color}]+{req.delta_consumption:,.0f}/hr[/{color}])")
+        self.console.print(f"    Your production: {req.your_production:,.0f}/hr")
+
+        if req.surplus_or_deficit >= 0:
+            self.console.print(f"    Available after: [{color}]+{req.surplus_or_deficit:,.0f}/hr surplus[/{color}]")
+        else:
+            self.console.print(f"    Available after: [{color}]{req.surplus_or_deficit:,.0f}/hr DEFICIT[/{color}]")
+
+    def _display_bottleneck(self, bottleneck):
+        """Display bottleneck with solutions."""
+        severity_colors = {"critical": "red", "high": "yellow", "medium": "cyan"}
+        color = severity_colors.get(bottleneck.severity, "white")
+
+        self.console.print(f"\n[bold {color}]{bottleneck.ware.name}[/bold {color}]")
+        self.console.print(f"    Deficit: {bottleneck.deficit:,.0f}/hr")
+        self.console.print(f"    Severity: [{color}]{bottleneck.severity.upper()}[/{color}]")
+
+        if bottleneck.solutions:
+            self.console.print("    [bold]Solutions:[/bold]")
+            for i, sol in enumerate(bottleneck.solutions, 1):
+                is_recommended = sol == bottleneck.recommended_solution
+                prefix = "→" if is_recommended else " "
+                rec_tag = " [green](recommended)[/green]" if is_recommended else ""
+
+                self.console.print(f"    {prefix} {i}. {sol.description}{rec_tag}")
+
+                if sol.blocking_issues:
+                    for issue in sol.blocking_issues:
+                        self.console.print(f"         [dim]{issue}[/dim]")
+
+    def expansion_planner_view(self):
+        """Top-level expansion planning view."""
+        self.console.clear()
+        self.console.print("[bold cyan]EXPANSION PLANNER[/bold cyan]\n")
+
+        if not self.wares_extractor:
+            self.console.print("[red]Game data not loaded - expansion analysis unavailable[/red]")
+            self.console.print("[dim]Ensure X4 game directory is configured in Options[/dim]")
+            self._wait_for_enter()
+            return
+
+        # Show wares with production
+        all_stats = self.analyzer.get_all_production_stats()
+        producible = [s for s in all_stats if s.module_count > 0 and s.has_rate_data]
+
+        if not producible:
+            self.console.print("[yellow]No production modules found in your empire[/yellow]")
+            self._wait_for_enter()
+            return
+
+        self.console.print("Select a ware to analyze expansion impact:\n")
+
+        table = Table(show_header=True, box=None)
+        table.add_column("#", style="cyan", width=4)
+        table.add_column("Ware", style="green")
+        table.add_column("Modules", justify="right")
+        table.add_column("Production", justify="right", style="yellow")
+        table.add_column("Status", justify="right")
+
+        for i, stats in enumerate(producible[:20], 1):  # Limit to top 20
+            status = stats.supply_status
+            status_color = "red" if status == "Shortage" else "green" if status in ("Surplus", "Balanced") else "dim"
+            table.add_row(
+                str(i),
+                stats.ware.name,
+                str(stats.module_count),
+                f"{stats.production_rate_per_hour:,.0f}/hr",
+                f"[{status_color}]{status}[/{status_color}]"
+            )
+
+        self.console.print(table)
+        self.console.print("\n[dim]Enter number to select, or type ware name to search[/dim]")
+        self.console.print("[dim][B] Back to main menu[/dim]\n")
+
+        choice = self.console.input("Selection: ").strip()
+
+        if not choice or choice.lower() == 'b':
+            return
+
+        # Try as number
+        if choice.isdigit():
+            idx = int(choice) - 1
+            if 0 <= idx < len(producible):
+                stats = producible[idx]
+                self._expansion_analysis_for_ware(stats)
+                return
+            else:
+                self.console.print("[red]Invalid selection[/red]")
+                self._wait_for_enter()
+                return
+
+        # Try as search
+        results = self.analyzer.search_production(choice)
+        producible_results = [s for s in results if s.module_count > 0]
+
+        if not producible_results:
+            self.console.print(f"[red]No producible wares found matching '{choice}'[/red]")
+            self._wait_for_enter()
+            return
+
+        if len(producible_results) == 1:
+            self._expansion_analysis_for_ware(producible_results[0])
+        else:
+            # Multiple results
+            self.console.print(f"\nMultiple matches for '{choice}':")
+            for i, s in enumerate(producible_results[:10], 1):
+                self.console.print(f"  {i}. {s.ware.name} ({s.module_count} modules)")
+
+            sub_choice = self.console.input("\nSelect number: ").strip()
+            if sub_choice.isdigit():
+                idx = int(sub_choice) - 1
+                if 0 <= idx < len(producible_results):
+                    self._expansion_analysis_for_ware(producible_results[idx])
 
     def export_report_view(self):
         """Export data to file."""
