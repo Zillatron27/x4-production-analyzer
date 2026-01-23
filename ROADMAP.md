@@ -48,6 +48,7 @@
 - Multi-save comparison
 - SQLite backend for large empires
 - Profit analysis integration
+- UI themes
 
 ---
 
