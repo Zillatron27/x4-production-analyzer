@@ -75,17 +75,24 @@ WARE_DATABASE = {
 }
 
 
+def normalize_ware_id(ware_id: str) -> str:
+    """
+    Normalize a ware ID for consistent lookups.
+
+    X4 wares use lowercase IDs without underscores (e.g., "energycells", "refinedmetals").
+    This normalizes any input format to match the database keys.
+    """
+    return ware_id.lower().replace("_", "").replace(" ", "")
+
+
 def get_ware(ware_id: str) -> Ware:
     """Get ware from database or create a new unknown ware."""
-    # Normalize the ware_id (remove underscores, lowercase)
-    normalized = ware_id.lower().replace("_", "")
+    normalized = normalize_ware_id(ware_id)
 
     if normalized in WARE_DATABASE:
         return WARE_DATABASE[normalized]
-    if ware_id in WARE_DATABASE:
-        return WARE_DATABASE[ware_id]
 
-    # Create unknown ware
+    # Create unknown ware with original ID preserved
     return Ware(ware_id, ware_id.replace("_", " ").title(), WareCategory.UNKNOWN)
 
 

@@ -3,12 +3,22 @@
 import gzip
 import logging
 from pathlib import Path
-from typing import Optional, Callable, Dict, List, Any
+from typing import Optional, Callable, Dict, List, Any, Union
 from lxml.etree import iterparse
 from dataclasses import dataclass, field
 
-from ..models.entities import Station, ProductionModule, Ship, TradeResource, EmpireData
+from ..models.entities import Station, ProductionModule, Ship, ShipPurpose, TradeResource, EmpireData
 from ..models.ware_database import get_ware
+
+
+def safe_int(value: Union[str, None], default: int = 0) -> int:
+    """Safely convert a value to int, returning default on failure."""
+    if value is None:
+        return default
+    try:
+        return int(value)
+    except (ValueError, TypeError):
+        return default
 
 
 def setup_logger():
@@ -59,6 +69,8 @@ class ParsedShip:
     purpose: str = ""
     cargo_capacity: int = 0
     commander_id: Optional[str] = None  # Station or fleet commander this ship is assigned to
+    order_type: str = ""  # "MiningRoutine", "TradeRoutine", etc.
+    mining_ware: str = ""  # What ware this ship is mining (if any)
 
 
 class StreamingParser:
@@ -69,8 +81,9 @@ class StreamingParser:
     the entire tree into memory.
     """
 
-    def __init__(self, file_path: str):
+    def __init__(self, file_path: str, ships_extractor=None):
         self.file_path = Path(file_path)
+        self._ships_extractor = ships_extractor  # Optional ShipsExtractor for cargo capacity lookup
 
         # Lightweight storage during parsing
         self._stations: Dict[str, ParsedStation] = {}
@@ -258,6 +271,37 @@ class StreamingParser:
                             ship.commander_id = connected_id
                             logger.debug(f"Ship {current_player_ship_id} commander connected to {connected_id}")
 
+                # Parse ship orders to determine what they're mining/trading
+                if tag == 'order' and current_player_ship_id:
+                    order_type = elem.get('order', '')
+                    is_default = elem.get('default') == '1'
+                    ship = self._ships.get(current_player_ship_id)
+                    if ship and is_default and order_type:
+                        ship.order_type = order_type
+                        # For mining orders, we'll capture the warebasket from param elements
+                        if order_type == 'MiningRoutine':
+                            # The warebasket param will be captured below
+                            pass
+
+                # Parse order parameters (specifically warebasket for mining)
+                if tag == 'param' and current_player_ship_id:
+                    param_name = elem.get('name', '')
+                    if param_name == 'warebasket':
+                        # warebasket contains ware IDs for what the ship is mining
+                        # It can be a list value like "15071" which maps to wares
+                        ship = self._ships.get(current_player_ship_id)
+                        if ship and ship.order_type == 'MiningRoutine':
+                            # The value is an internal ID, but we can also check warebasket_override
+                            pass
+                    elif param_name == 'warebasket_override':
+                        # This is more reliable - contains actual ware override
+                        ship = self._ships.get(current_player_ship_id)
+                        if ship and ship.order_type == 'MiningRoutine':
+                            # Value is internal ID, we'll resolve in post-processing
+                            value = elem.get('value', '')
+                            if value:
+                                ship.mining_ware = value  # Store for now, resolve later
+
                 # Track when we exit a ships connection
                 if tag == 'connection':
                     conn_type = elem.get('connection', '')
@@ -313,8 +357,13 @@ class StreamingParser:
                     station = self._stations.get(self._current_station_id)
 
                     if station:
-                        # Track production modules
-                        if 'prod_' in macro_lower:
+                        # Track production modules - must start with a production module prefix
+                        # X4 production module macros follow pattern: prod_gen_*, prod_arg_*, prod_par_*, etc.
+                        is_production_module = any(
+                            macro_lower.startswith(prefix) for prefix in
+                            ['prod_gen_', 'prod_arg_', 'prod_par_', 'prod_tel_', 'prod_spl_', 'prod_ter_']
+                        )
+                        if is_production_module:
                             station.modules.append(macro)
 
                         # Detect station type from buildmodule macros
@@ -348,8 +397,8 @@ class StreamingParser:
                         if station:
                             is_seller = elem.get('seller') is not None
                             is_buyer = elem.get('buyer') is not None
-                            amount = int(elem.get('amount', 0))
-                            desired = int(elem.get('desired', 0))
+                            amount = safe_int(elem.get('amount'), default=0)
+                            desired = safe_int(elem.get('desired'), default=0)
 
                             if ware_id not in station.trade_wares:
                                 station.trade_wares[ware_id] = {'sell': [], 'buy': []}
@@ -367,7 +416,7 @@ class StreamingParser:
                     if comp_info['class'].startswith('ship_') or comp_info['class'] == 'ship':
                         ship = self._ships.get(comp_info['id'])
                         if ship:
-                            ship.cargo_capacity = int(elem.get('max', 0))
+                            ship.cargo_capacity = safe_int(elem.get('max'), default=0)
 
                 # Clear element and remove from parent to free memory
                 elem.clear()
@@ -484,23 +533,39 @@ class StreamingParser:
             # Convert modules
             for macro in parsed.modules:
                 ware_id = self._extract_ware_from_macro(macro)
+
+                # Only create module if we could extract a valid ware ID
+                if not ware_id:
+                    continue
+
+                # Validate by checking if ware actually has trade data for this station
+                # This prevents phantom modules where prod_ is in the macro but no actual production
+                ware = get_ware(ware_id)
+                has_trade_data = ware_id in parsed.trade_wares and parsed.trade_wares[ware_id]['sell']
+
+                # Skip if this looks like a production module but has no trade data
+                # (suggests it's a structural element, not actual production)
+                if not has_trade_data:
+                    # Log for debugging but still allow modules without trade data
+                    # in case trade data wasn't captured
+                    logger.debug(f"Station {parsed.name}: module {macro} -> {ware_id} has no sell trade data")
+
                 module = ProductionModule(
                     module_id=f"{station_id}_{macro}",
                     macro=macro
                 )
-                if ware_id:
-                    module.output_ware = get_ware(ware_id)
+                module.output_ware = ware
 
-                    # Add trade data if available
-                    if ware_id in parsed.trade_wares:
-                        trade = parsed.trade_wares[ware_id]
-                        if trade['sell']:
-                            sell_data = trade['sell'][0]
-                            module.output = TradeResource(
-                                ware=module.output_ware,
-                                amount=sell_data['amount'],
-                                capacity=sell_data['desired'] if sell_data['desired'] > 0 else sell_data['amount'] * 2
-                            )
+                # Add trade data if available
+                if ware_id in parsed.trade_wares:
+                    trade = parsed.trade_wares[ware_id]
+                    if trade['sell']:
+                        sell_data = trade['sell'][0]
+                        module.output = TradeResource(
+                            ware=module.output_ware,
+                            amount=sell_data['amount'],
+                            capacity=sell_data['desired'] if sell_data['desired'] > 0 else sell_data['amount'] * 2
+                        )
 
                 station.modules.append(module)
 
@@ -515,14 +580,20 @@ class StreamingParser:
             for sub_id in parsed.subordinate_ids:
                 ship_data = self._ships.get(sub_id)
                 if ship_data:
-                    ship_type = self._determine_ship_type(ship_data)
+                    ship_purpose = self._determine_ship_purpose(ship_data)
+                    game_info = self._get_ship_info_from_game_data(ship_data)
                     ship = Ship(
                         ship_id=ship_data.ship_id,
                         name=ship_data.name,
-                        ship_class=ship_data.macro,
-                        ship_type=ship_type,
-                        cargo_capacity=ship_data.cargo_capacity,
-                        assigned_station_id=station_id
+                        ship_class=game_info["ship_class"] or ship_data.macro,
+                        ship_type=game_info["ship_type"],
+                        ship_purpose=ship_purpose,
+                        cargo_capacity=game_info["cargo_capacity"],
+                        assigned_station_id=station_id,
+                        cargo_tags=game_info["cargo_tags"],
+                        mining_ware=ship_data.mining_ware,
+                        order_type=ship_data.order_type,
+                        race=game_info["race"]
                     )
                     station.assigned_ships.append(ship)
                     assigned_ship_ids.add(sub_id)
@@ -532,14 +603,20 @@ class StreamingParser:
         # Collect unassigned player ships (not assigned to stations AND not in fleets)
         for ship_id, ship_data in self._ships.items():
             if ship_data.owner == 'player' and ship_id not in assigned_ship_ids and ship_id not in fleet_ship_ids:
-                ship_type = self._determine_ship_type(ship_data)
+                ship_purpose = self._determine_ship_purpose(ship_data)
+                game_info = self._get_ship_info_from_game_data(ship_data)
                 ship = Ship(
                     ship_id=ship_data.ship_id,
                     name=ship_data.name,
-                    ship_class=ship_data.macro,
-                    ship_type=ship_type,
-                    cargo_capacity=ship_data.cargo_capacity,
-                    assigned_station_id=None
+                    ship_class=game_info["ship_class"] or ship_data.macro,
+                    ship_type=game_info["ship_type"],
+                    ship_purpose=ship_purpose,
+                    cargo_capacity=game_info["cargo_capacity"],
+                    assigned_station_id=None,
+                    cargo_tags=game_info["cargo_tags"],
+                    mining_ware=ship_data.mining_ware,
+                    order_type=ship_data.order_type,
+                    race=game_info["race"]
                 )
                 empire.unassigned_ships.append(ship)
 
@@ -555,37 +632,83 @@ class StreamingParser:
         if "prod_" not in macro.lower():
             return ""
 
-        macro = macro.lower()
+        macro_lower = macro.lower()
+
+        # Skip non-production entries that happen to contain 'prod_'
+        # such as production storage modules or other structural elements
+        if 'storage' in macro_lower or 'struct' in macro_lower or 'connection' in macro_lower:
+            return ""
+
         for prefix in ['prod_gen_', 'prod_arg_', 'prod_par_', 'prod_tel_', 'prod_spl_', 'prod_ter_', 'prod_']:
-            macro = macro.replace(prefix, '')
+            macro_lower = macro_lower.replace(prefix, '')
         for suffix in ['_macro', '_01', '_02', '_03']:
-            macro = macro.replace(suffix, '')
+            macro_lower = macro_lower.replace(suffix, '')
 
-        return macro
+        return macro_lower
 
-    def _determine_ship_type(self, ship: ParsedShip) -> str:
-        """Determine ship type from purpose and macro."""
+    def _get_ship_info_from_game_data(self, ship: ParsedShip) -> dict:
+        """
+        Get ship information from game data.
+
+        Returns:
+            Dict with cargo_capacity, cargo_tags, ship_type, ship_class, race
+        """
+        result = {
+            "cargo_capacity": 0,
+            "cargo_tags": "",
+            "ship_type": "unknown",
+            "ship_class": "",
+            "race": ""
+        }
+
+        if self._ships_extractor:
+            ship_info = self._ships_extractor.get_ship_info(ship.macro)
+            if ship_info:
+                result["cargo_capacity"] = ship_info.cargo_capacity
+                result["cargo_tags"] = ship_info.cargo_tags
+                result["ship_type"] = ship_info.ship_type
+                result["ship_class"] = ship_info.ship_class
+                result["race"] = ship_info.race
+
+        return result
+
+    def _determine_ship_purpose(self, ship: ParsedShip) -> ShipPurpose:
+        """
+        Determine ship's current purpose/role from orders and behavior.
+
+        This is separate from ship_type (which is the game-defined category like 'freighter').
+        Purpose indicates what the ship is actually doing: trading, mining, combat, etc.
+        """
         purpose = ship.purpose.lower()
         macro = ship.macro.lower()
+        order_type = ship.order_type.lower() if ship.order_type else ""
 
-        # Check purpose first (most reliable)
+        # Check order type first (most reliable for current behavior)
+        if 'trade' in order_type:
+            return ShipPurpose.TRADER
+        elif 'mining' in order_type:
+            return ShipPurpose.MINER
+        elif 'build' in order_type:
+            return ShipPurpose.BUILDER
+
+        # Check purpose attribute
         if 'trade' in purpose:
-            return 'trader'
+            return ShipPurpose.TRADER
         elif 'mine' in purpose:
-            return 'miner'
+            return ShipPurpose.MINER
         elif 'build' in purpose or 'moveto' in purpose:
-            return 'builder'
+            return ShipPurpose.BUILDER
 
         # Check macro for ship role hints
         if 'trans' in macro or 'freighter' in macro or 'hauler' in macro:
-            return 'trader'
+            return ShipPurpose.TRADER
         elif 'miner' in macro or 'mining' in macro:
-            return 'miner'
+            return ShipPurpose.MINER
         elif 'builder' in macro or 'construct' in macro:
-            return 'builder'
+            return ShipPurpose.BUILDER
         elif 'fighter' in macro or 'corvette' in macro or 'frigate' in macro:
-            return 'combat'
+            return ShipPurpose.COMBAT
         elif 'carrier' in macro or 'destroyer' in macro or 'battleship' in macro:
-            return 'combat'
+            return ShipPurpose.COMBAT
 
-        return 'other'
+        return ShipPurpose.OTHER

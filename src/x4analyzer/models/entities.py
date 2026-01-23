@@ -14,6 +14,29 @@ class WareCategory(Enum):
     UNKNOWN = "Unknown"
 
 
+class ShipPurpose(Enum):
+    """
+    Ship's current behavioral purpose (what it's doing).
+
+    This is distinct from ship_type (game-defined role like 'freighter').
+    Purpose is determined from current orders, assignments, and behavior.
+    """
+    TRADER = "trader"
+    MINER = "miner"
+    COMBAT = "combat"
+    BUILDER = "builder"
+    OTHER = "other"
+
+    @classmethod
+    def from_string(cls, value: str) -> "ShipPurpose":
+        """Convert a string to ShipPurpose, defaulting to OTHER if not found."""
+        value_lower = value.lower().strip()
+        for purpose in cls:
+            if purpose.value == value_lower:
+                return purpose
+        return cls.OTHER
+
+
 @dataclass
 class Ware:
     """Represents a production ware/commodity."""
@@ -51,8 +74,10 @@ class ProductionModule:
     module_id: str
     macro: str
     output_ware: Optional[Ware] = None
-    inputs: List[TradeResource] = field(default_factory=list)
     output: Optional[TradeResource] = None
+    # NOTE: Input requirements are looked up from game data (wares.xml) rather than
+    # parsed from save files. The game data provides accurate per-cycle consumption
+    # which we use in ProductionAnalyzer._calculate_all_consumption_rates().
 
     @property
     def is_production(self) -> bool:
@@ -65,10 +90,15 @@ class Ship:
     """Represents a ship assigned to a station."""
     ship_id: str
     name: str
-    ship_class: str
-    ship_type: str  # trader, miner, etc.
+    ship_class: str  # Size class: ship_s, ship_m, ship_l, ship_xl
+    ship_type: str  # Game-defined role: freighter, miner, fighter, etc.
+    ship_purpose: ShipPurpose = ShipPurpose.OTHER  # Current purpose based on orders/behavior
     cargo_capacity: int = 0
     assigned_station_id: Optional[str] = None
+    cargo_tags: str = ""  # What this ship can carry: "solid", "liquid", "container"
+    mining_ware: str = ""  # What ware this ship is mining (if any)
+    order_type: str = ""  # Current order type: "MiningRoutine", "TradeRoutine", etc.
+    race: str = ""  # Manufacturing faction: argon, paranid, teladi, etc.
 
 
 @dataclass
@@ -91,12 +121,12 @@ class Station:
     @property
     def traders(self) -> List[Ship]:
         """Get assigned trader ships."""
-        return [s for s in self.assigned_ships if s.ship_type == "trader"]
+        return [s for s in self.assigned_ships if s.ship_purpose == ShipPurpose.TRADER]
 
     @property
     def miners(self) -> List[Ship]:
         """Get assigned miner ships."""
-        return [s for s in self.assigned_ships if s.ship_type == "miner"]
+        return [s for s in self.assigned_ships if s.ship_purpose == ShipPurpose.MINER]
 
     @property
     def total_cargo_capacity(self) -> int:
@@ -142,12 +172,12 @@ class EmpireData:
     @property
     def unassigned_traders(self) -> List[Ship]:
         """Get unassigned trader ships."""
-        return [s for s in self.unassigned_ships if s.ship_type == "trader"]
+        return [s for s in self.unassigned_ships if s.ship_purpose == ShipPurpose.TRADER]
 
     @property
     def unassigned_miners(self) -> List[Ship]:
         """Get unassigned miner ships."""
-        return [s for s in self.unassigned_ships if s.ship_type == "miner"]
+        return [s for s in self.unassigned_ships if s.ship_purpose == ShipPurpose.MINER]
 
     def get_production_by_ware(self) -> Dict[Ware, List[ProductionModule]]:
         """Group production modules by output ware."""

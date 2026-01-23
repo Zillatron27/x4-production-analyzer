@@ -1,10 +1,31 @@
 """Production analysis and statistics."""
 
-from typing import Dict, List, Tuple, Optional
+import logging
+from typing import Dict, List, Optional
 from collections import defaultdict
+
 from ..models.entities import (
-    EmpireData, Station, ProductionModule, Ware, WareCategory, TradeResource
+    EmpireData, Station, ProductionModule, Ware, WareCategory
 )
+from ..models.ware_database import get_ware
+
+logger = logging.getLogger("x4analyzer.analyzer")
+
+# Supply/demand balance thresholds (as ratios of consumption/production)
+# Below this ratio = Surplus (producing more than consuming)
+SUPPLY_SURPLUS_THRESHOLD = 0.8
+# Above this ratio = Shortage (consuming more than producing)
+SUPPLY_SHORTAGE_THRESHOLD = 1.2
+
+# Storage-based utilization thresholds (as percentages)
+STORAGE_SURPLUS_THRESHOLD = 80  # Below 80% utilization = surplus
+STORAGE_SHORTAGE_THRESHOLD = 120  # Above 120% utilization = shortage
+
+# Mining capacity thresholds (cargo capacity vs consumption rate)
+# Sufficient: cargo capacity >= consumption/hr * 1.5 (miners have buffer capacity)
+MINING_SUFFICIENT_MULTIPLIER = 1.5
+# Marginal: cargo capacity >= consumption/hr (miners can just keep up)
+MINING_MARGINAL_MULTIPLIER = 1.0
 
 
 class ProductionStats:
@@ -32,6 +53,10 @@ class ProductionStats:
         self.station_production_rates: Dict[str, float] = {}  # station_name -> units/hour produced
         self.station_consumption_rates: Dict[str, float] = {}  # station_name -> units/hour consumed
 
+        # Mining capacity (for raw materials)
+        self.mining_ship_count: int = 0  # Number of miners assigned to stations consuming this ware
+        self.mining_cargo_capacity: int = 0  # Total cargo capacity of those miners
+
     @property
     def capacity_percent(self) -> float:
         """Calculate overall stock vs capacity utilization (storage fill level)."""
@@ -53,9 +78,19 @@ class ProductionStats:
         if self.has_rate_data:
             return self._rate_based_supply_status()
 
+        # If no rate data but also no production and no consumption, it's "No Demand"
+        # This catches wares that appear in storage but aren't actively used
+        if self.total_production_output == 0 and self.total_consumption_demand == 0:
+            return "No Demand"
+
         # Fallback to stock-based estimation
-        # If we have consumption but no production, that's a shortage
+        # If we have consumption but no production, check for mining capacity
         if self.total_consumption_demand > 0 and self.total_production_output == 0:
+            # Check if this is a mined raw material with sufficient miners
+            if self.mining_ship_count > 0:
+                mining_status = self.mining_coverage_status
+                if mining_status in ("Sufficient", "Marginal"):
+                    return "Balanced"
             return "Shortage"
 
         # If no consumption, check if we're producing (surplus) or not tracking
@@ -65,28 +100,36 @@ class ProductionStats:
             return "No Demand"
 
         util = self.production_utilization
-        if util < 80:
+        if util < STORAGE_SURPLUS_THRESHOLD:
             return "Surplus"
-        elif util <= 120:
+        elif util <= STORAGE_SHORTAGE_THRESHOLD:
             return "Balanced"
         else:
             return "Shortage"
 
     def _rate_based_supply_status(self) -> str:
         """Get supply status based on actual production rates."""
-        if self.production_rate_per_hour == 0:
+        if self.production_rate_per_hour <= 0:
             if self.consumption_rate_per_hour > 0:
+                # No production modules - check if this is a mined raw material
+                if self.mining_ship_count > 0:
+                    # Use mining coverage status instead
+                    mining_status = self.mining_coverage_status
+                    if mining_status in ("Sufficient", "Marginal"):
+                        return "Balanced"  # Miners can supply the demand
+                    else:
+                        return "Shortage"  # Insufficient miners
                 return "Shortage"
             return "No Demand"
 
-        if self.consumption_rate_per_hour == 0:
+        if self.consumption_rate_per_hour <= 0:
             return "Surplus"
 
-        # Calculate ratio of consumption to production
+        # Calculate ratio of consumption to production (safe - checked above)
         ratio = self.consumption_rate_per_hour / self.production_rate_per_hour
-        if ratio < 0.8:
+        if ratio < SUPPLY_SURPLUS_THRESHOLD:
             return "Surplus"
-        elif ratio <= 1.2:
+        elif ratio <= SUPPLY_SHORTAGE_THRESHOLD:
             return "Balanced"
         else:
             return "Shortage"
@@ -123,6 +166,42 @@ class ProductionStats:
             self.consuming_stations[station_name] = 0
         self.consuming_stations[station_name] += demand_amount
 
+    def add_mining_capacity(self, ship_count: int, cargo_capacity: int):
+        """Add mining capacity from miners assigned to stations consuming this ware."""
+        self.mining_ship_count += ship_count
+        self.mining_cargo_capacity += cargo_capacity
+
+    @property
+    def mining_coverage_status(self) -> str:
+        """
+        Get mining coverage status for raw materials.
+
+        Compares mining cargo capacity to consumption rate.
+        Returns status: "Sufficient", "Marginal", "Insufficient", or "No Miners"
+
+        NOTE: This is a simplified heuristic. Actual mining throughput depends on:
+        - Mining laser extraction speed
+        - Distance to asteroid fields
+        - Round-trip travel time
+        - Miner AI efficiency
+        The cargo capacity comparison provides a rough ballpark estimate assuming
+        miners can complete ~1-2 round trips per hour with full loads.
+        """
+        if self.mining_ship_count == 0:
+            return "No Miners"
+
+        if not self.has_rate_data or self.consumption_rate_per_hour <= 0:
+            # Can't determine coverage without consumption rate
+            return f"{self.mining_ship_count} miners"
+
+        # Compare mining capacity to consumption rate using threshold constants
+        if self.mining_cargo_capacity >= self.consumption_rate_per_hour * MINING_SUFFICIENT_MULTIPLIER:
+            return "Sufficient"
+        elif self.mining_cargo_capacity >= self.consumption_rate_per_hour * MINING_MARGINAL_MULTIPLIER:
+            return "Marginal"
+        else:
+            return "Insufficient"
+
     def get_station_production_rate(self, station_name: str) -> float:
         """Get production rate for a specific station (units/hour)."""
         return self.station_production_rates.get(station_name, 0.0)
@@ -144,6 +223,20 @@ class ProductionAnalyzer:
         self._production_stats: Dict[Ware, ProductionStats] = {}
         self._analyze()
 
+    # Define which raw materials can be mined by which cargo type
+    # Solid miners: ore, silicon, nividium, rawscrap
+    # Liquid/Gas miners: hydrogen, helium, methane, ice (ice can be either)
+    RAW_MATERIAL_CARGO_TYPES = {
+        "ore": "solid",
+        "silicon": "solid",
+        "nividium": "solid",
+        "rawscrap": "solid",
+        "hydrogen": "liquid",
+        "helium": "liquid",
+        "methane": "liquid",
+        "ice": "liquid",  # Ice is typically collected by gas miners
+    }
+
     def _analyze(self):
         """Perform initial analysis of production data."""
         # First pass: Build production statistics
@@ -158,26 +251,18 @@ class ProductionAnalyzer:
         # Second pass: Track consumption demand from all stations
         self._analyze_consumption()
 
+        # Third pass: Track mining capacity for raw materials
+        self._analyze_mining_capacity()
+
     def _analyze_consumption(self):
         """Analyze consumption demand across all stations."""
-        from ..models.ware_database import get_ware
-
         for station in self.empire.stations:
-            # Collect all inputs from all modules at this station
+            # Collect input demands from station's trade data
+            # This captures consumption from wharfs/shipyards/equipment docks
+            # Note: Production module input requirements are calculated from game data
+            # in _calculate_all_consumption_rates() for more accurate rate-based analysis
             station_inputs: Dict[str, int] = {}  # ware_id -> total demand
 
-            # Method 1: Get inputs from production modules
-            for module in station.production_modules:
-                for input_res in module.inputs:
-                    ware_id = input_res.ware.ware_id
-                    # Use capacity as demand (desired amount)
-                    demand = input_res.capacity if input_res.capacity > 0 else input_res.amount
-                    if ware_id not in station_inputs:
-                        station_inputs[ware_id] = 0
-                    station_inputs[ware_id] += demand
-
-            # Method 2: Get inputs from station's direct trade data
-            # This captures wharf/shipyard/equipmentdock consumption
             for ware_id, demand in station.input_demands.items():
                 if ware_id not in station_inputs:
                     station_inputs[ware_id] = 0
@@ -186,13 +271,69 @@ class ProductionAnalyzer:
             # Add consumption to production stats for each input ware
             for ware_id, demand in station_inputs.items():
                 ware = get_ware(ware_id)
-                if ware in self._production_stats:
-                    self._production_stats[ware].add_consumption(station.name, demand)
-                elif station.station_type in ("wharf", "shipyard", "equipmentdock"):
-                    # Create production stats for wares consumed by wharfs/shipyards
-                    # even if we don't produce them (shows demand exists)
+                if ware not in self._production_stats:
+                    # Create production stats for wares we consume but don't produce
+                    # This includes raw materials, wares consumed by wharfs/shipyards, etc.
                     self._production_stats[ware] = ProductionStats(ware)
-                    self._production_stats[ware].add_consumption(station.name, demand)
+                self._production_stats[ware].add_consumption(station.name, demand)
+
+    def _analyze_mining_capacity(self):
+        """
+        Analyze mining capacity for raw materials.
+
+        For each raw material, count the miners assigned to stations that consume it,
+        and sum up their cargo capacity.
+        """
+        # Track which stations consume which raw materials
+        raw_material_consumers: Dict[str, List[str]] = {}  # ware_id -> list of station_names
+
+        for stats in self._production_stats.values():
+            if stats.ware.category == WareCategory.RAW:
+                ware_id = stats.ware.ware_id.lower()
+                raw_material_consumers[ware_id] = list(stats.consuming_stations.keys())
+
+        # For each station, check if it has miners that can supply its raw material needs
+        for station in self.empire.stations:
+            # Get miners at this station
+            miners = station.miners
+
+            if not miners:
+                continue
+
+            # Categorize miners by cargo type
+            solid_miners = []
+            liquid_miners = []
+
+            for miner in miners:
+                cargo_tags = miner.cargo_tags.lower() if miner.cargo_tags else ""
+                if "solid" in cargo_tags:
+                    solid_miners.append(miner)
+                elif "liquid" in cargo_tags or "gas" in cargo_tags:
+                    liquid_miners.append(miner)
+                else:
+                    # Unknown type - check macro for hints
+                    macro = miner.ship_class.lower()
+                    if "liquid" in macro or "gas" in macro:
+                        liquid_miners.append(miner)
+                    else:
+                        solid_miners.append(miner)  # Default to solid
+
+            # For each raw material this station consumes, add mining capacity
+            for ware_id, consuming_stations in raw_material_consumers.items():
+                if station.name not in consuming_stations:
+                    continue
+
+                # Determine which miners can supply this raw material
+                cargo_type = self.RAW_MATERIAL_CARGO_TYPES.get(ware_id, "solid")
+                relevant_miners = solid_miners if cargo_type == "solid" else liquid_miners
+
+                if relevant_miners:
+                    ware = get_ware(ware_id)
+                    if ware in self._production_stats:
+                        total_cargo = sum(m.cargo_capacity for m in relevant_miners)
+                        self._production_stats[ware].add_mining_capacity(
+                            len(relevant_miners), total_cargo
+                        )
 
     def get_supply_shortages(self) -> List[ProductionStats]:
         """Get wares with supply shortages (demand exceeds production)."""
@@ -267,33 +408,39 @@ class ProductionAnalyzer:
         """
         Analyze production dependencies for a ware.
 
+        Uses consumption rate data to find which wares are consumed when
+        producing the target ware, and which wares consume it.
+
         Returns dict with 'inputs' and 'consumers' lists.
         """
         target_stats = self.get_ware_stats(ware_id)
         if not target_stats:
             return {"inputs": [], "consumers": []}
 
-        # Get input requirements
-        input_wares = set()
-        for module in target_stats.modules:
-            for input_res in module.inputs:
-                input_wares.add(input_res.ware)
-
-        # Find production stats for inputs
         input_stats = []
-        for ware in input_wares:
-            stats = self._production_stats.get(ware)
-            if stats:
-                input_stats.append(stats)
-
-        # Find consumers (modules that use this ware as input)
         consumer_stats = []
+
+        # Find consumers - wares whose production consumes this ware
+        # by checking which wares are consumed at stations that produce them
+        target_ware_id = target_stats.ware.ware_id.lower()
+
         for stats in self._production_stats.values():
-            for module in stats.modules:
-                for input_res in module.inputs:
-                    if input_res.ware == target_stats.ware:
+            if stats.ware.ware_id == target_stats.ware.ware_id:
+                continue
+
+            # Check if any station that produces this ware also consumes our target
+            for station_name in stats.station_production_rates.keys():
+                if target_stats.get_station_consumption_rate(station_name) > 0:
+                    if stats not in consumer_stats:
                         consumer_stats.append(stats)
-                        break
+                    break
+
+            # Check if our target is consumed at stations that produce the target ware
+            if target_stats.get_station_consumption_rate(station_name) > 0:
+                for producing_station in target_stats.station_production_rates.keys():
+                    cons_rate = stats.get_station_consumption_rate(producing_station)
+                    if cons_rate > 0 and stats not in input_stats:
+                        input_stats.append(stats)
 
         return {
             "inputs": input_stats,
@@ -307,17 +454,22 @@ class ProductionAnalyzer:
         assigned_cargo = 0
         assigned_ships = 0
 
+        # Calculate trader cargo specifically (excluding miners)
+        trader_cargo = 0
+
         for station in self.empire.stations:
             assigned_traders += len(station.traders)
             assigned_miners += len(station.miners)
             assigned_cargo += station.total_cargo_capacity
             assigned_ships += len(station.assigned_ships)
+            trader_cargo += sum(s.cargo_capacity for s in station.traders)
 
         # Unassigned ships
         unassigned_ships = len(self.empire.unassigned_ships)
         unassigned_traders = len(self.empire.unassigned_traders)
         unassigned_miners = len(self.empire.unassigned_miners)
         unassigned_cargo = sum(s.cargo_capacity for s in self.empire.unassigned_ships)
+        unassigned_trader_cargo = sum(s.cargo_capacity for s in self.empire.unassigned_traders)
 
         return {
             "total_ships": assigned_ships + unassigned_ships,
@@ -330,8 +482,41 @@ class ProductionAnalyzer:
             "assigned_miners": assigned_miners,
             "unassigned_miners": unassigned_miners,
             "total_cargo_capacity": assigned_cargo + unassigned_cargo,
-            "assigned_cargo_capacity": assigned_cargo,
-            "unassigned_cargo_capacity": unassigned_cargo
+            "assigned_cargo_capacity": trader_cargo,  # Now specifically trader cargo
+            "unassigned_cargo_capacity": unassigned_trader_cargo
+        }
+
+    def get_throughput_summary(self) -> Dict[str, float]:
+        """
+        Get empire-wide production throughput summary.
+
+        Returns metrics useful for logistics capacity planning:
+        - total_production: Total units/hr being produced across empire
+        - total_consumption: Total units/hr being consumed across empire
+        - inter_station_flow: Estimated units/hr that need to be transported between stations
+        """
+        total_production = 0.0
+        total_consumption = 0.0
+        inter_station_flow = 0.0
+
+        for stats in self._production_stats.values():
+            if stats.has_rate_data:
+                total_production += stats.production_rate_per_hour
+                total_consumption += stats.consumption_rate_per_hour
+
+                # Inter-station flow: consumption that isn't satisfied by same-station production
+                # This is a rough estimate - wares need to move between stations
+                for station_name, cons_rate in stats.station_consumption_rates.items():
+                    # Check if this station also produces this ware
+                    prod_rate = stats.station_production_rates.get(station_name, 0)
+                    # The amount that needs to come from other stations
+                    import_needed = max(0, cons_rate - prod_rate)
+                    inter_station_flow += import_needed
+
+        return {
+            "total_production": total_production,
+            "total_consumption": total_consumption,
+            "inter_station_flow": inter_station_flow
         }
 
     def search_production(self, query: str) -> List[ProductionStats]:
@@ -389,9 +574,8 @@ class ProductionAnalyzer:
             loaded_count = sum(1 for stats in self._production_stats.values() if stats.has_rate_data)
             return loaded_count > 0
 
-        except Exception as e:
-            import logging
-            logging.getLogger("x4analyzer").warning(f"Failed to load game data: {e}")
+        except (AttributeError, KeyError, TypeError) as e:
+            logger.warning(f"Failed to load game data: {e}")
             return False
 
     def _calculate_all_consumption_rates(self, game_wares: dict):
@@ -403,8 +587,6 @@ class ProductionAnalyzer:
         - Look up its input requirements from game data
         - Track both empire-wide totals and per-station breakdowns
         """
-        from ..models.ware_database import get_ware
-
         # Track rates per ware and per station
         # Structure: ware_id -> {total, stations: {station_name -> rate}}
         production_rates: Dict[str, Dict] = {}  # ware produced
@@ -445,6 +627,8 @@ class ProductionAnalyzer:
                     consumption_rates[input_ware_id]["stations"][station.name] += consumption_rate
 
         # Apply rates to existing production stats
+        # Mark all stats as having rate data - if a ware has no production or consumption
+        # rates calculated, that means it's truly "No Demand" (not producing, not consuming)
         for stats in self._production_stats.values():
             ware_id = stats.ware.ware_id.lower()
 
@@ -452,13 +636,15 @@ class ProductionAnalyzer:
             if ware_id in production_rates:
                 stats.production_rate_per_hour = production_rates[ware_id]["total"]
                 stats.station_production_rates = production_rates[ware_id]["stations"]
-                stats.has_rate_data = True
 
             # Apply consumption rates
             if ware_id in consumption_rates:
                 stats.consumption_rate_per_hour = consumption_rates[ware_id]["total"]
                 stats.station_consumption_rates = consumption_rates[ware_id]["stations"]
-                stats.has_rate_data = True
+
+            # Mark as having rate data - even if rates are 0, we know it's accurate
+            # (as opposed to falling back to storage-based estimates)
+            stats.has_rate_data = True
 
         # Create stats for wares that are consumed but not produced
         # (e.g., raw materials we buy from NPCs)
@@ -518,8 +704,6 @@ class ProductionAnalyzer:
         - consumed_wares: List of {ware, rate} for each consumed ware
         - net_rates: List of {ware, net_rate} where net_rate = production - consumption
         """
-        from ..models.ware_database import get_ware
-
         produced = []
         consumed = []
         net_rates = {}

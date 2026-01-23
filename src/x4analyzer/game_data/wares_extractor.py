@@ -5,12 +5,34 @@ import logging
 import xml.etree.ElementTree as ET
 from dataclasses import dataclass, field, asdict
 from pathlib import Path
-from typing import Dict, List, Optional
+from typing import Dict, List, Optional, Union
 
 from .catalog_reader import CatalogReader
 from .text_resolver import TextResolver
 
 logger = logging.getLogger("x4analyzer.game_data")
+
+
+def safe_int(value: Union[str, None], default: int = 0) -> int:
+    """Safely convert a value to int, returning default on failure."""
+    if value is None:
+        return default
+    try:
+        return int(value)
+    except (ValueError, TypeError):
+        logger.debug(f"Could not convert '{value}' to int, using default {default}")
+        return default
+
+
+def safe_float(value: Union[str, None], default: float = 0.0) -> float:
+    """Safely convert a value to float, returning default on failure."""
+    if value is None:
+        return default
+    try:
+        return float(value)
+    except (ValueError, TypeError):
+        logger.debug(f"Could not convert '{value}' to float, using default {default}")
+        return default
 
 
 @dataclass
@@ -164,7 +186,7 @@ class WaresExtractor:
             self._loaded = True
             return True
 
-        except Exception as e:
+        except (json.JSONDecodeError, KeyError, TypeError, IOError, OSError) as e:
             logger.warning(f"Failed to load cache: {e}")
             return False
 
@@ -205,7 +227,7 @@ class WaresExtractor:
             with open(cache_path, 'w') as f:
                 json.dump(data, f, indent=2)
             logger.info(f"Saved {len(self.wares)} wares to cache")
-        except Exception as e:
+        except (IOError, OSError, TypeError) as e:
             logger.error(f"Failed to save cache: {e}")
 
     def extract(self, force_reload: bool = False) -> Dict[str, ProductionData]:
@@ -254,14 +276,20 @@ class WaresExtractor:
             # Save to cache
             self._save_to_cache()
 
-        except Exception as e:
+        except (ET.ParseError, IOError, OSError) as e:
             logger.error(f"Failed to extract wares data: {e}")
 
         return self.wares
 
     def _parse_wares_xml(self, xml_content: str):
-        """Parse wares.xml content."""
-        root = ET.fromstring(xml_content)
+        """Parse wares.xml content with XXE protection."""
+        # Create a parser that disables external entity resolution for security
+        # While game files are trusted, this is defensive coding practice
+        parser = ET.XMLParser()
+        # Note: Python's xml.etree.ElementTree doesn't support external entities
+        # by default (unlike some other XML libraries), but we explicitly use
+        # a parser instance for clarity and future-proofing
+        root = ET.fromstring(xml_content, parser=parser)
 
         for ware_elem in root.findall(".//ware"):
             try:
@@ -290,16 +318,16 @@ class WaresExtractor:
         # Get transport class
         transport_class = ware_elem.get("transport", "container")
 
-        # Get volume
-        volume = int(ware_elem.get("volume", "1"))
+        # Get volume (safe conversion)
+        volume = safe_int(ware_elem.get("volume"), default=1)
 
-        # Get price info
+        # Get price info (safe conversions)
         price_elem = ware_elem.find("price")
         price_min = price_avg = price_max = 0
         if price_elem is not None:
-            price_min = int(price_elem.get("min", "0"))
-            price_avg = int(price_elem.get("average", "0"))
-            price_max = int(price_elem.get("max", "0"))
+            price_min = safe_int(price_elem.get("min"), default=0)
+            price_avg = safe_int(price_elem.get("average"), default=0)
+            price_max = safe_int(price_elem.get("max"), default=0)
 
         # Get production methods
         # X4 structure: <ware><production time="X" amount="Y" method="Z"><primary><ware .../></primary></production></ware>
@@ -324,11 +352,11 @@ class WaresExtractor:
         """Parse a production element."""
         method_id = production_elem.get("method", "default")
 
-        # Get production time (in seconds)
-        time_seconds = float(production_elem.get("time", "0"))
+        # Get production time in seconds (safe conversion)
+        time_seconds = safe_float(production_elem.get("time"), default=0.0)
 
-        # Get amount produced
-        amount = int(production_elem.get("amount", "1"))
+        # Get amount produced (safe conversion)
+        amount = safe_int(production_elem.get("amount"), default=1)
 
         # Get resource requirements from <primary> child
         resources = []
@@ -336,7 +364,7 @@ class WaresExtractor:
         if primary_elem is not None:
             for ware_elem in primary_elem.findall("ware"):
                 res_ware_id = ware_elem.get("ware")
-                res_amount = int(ware_elem.get("amount", "1"))
+                res_amount = safe_int(ware_elem.get("amount"), default=1)
                 if res_ware_id:
                     resources.append(ResourceRequirement(
                         ware_id=res_ware_id,
