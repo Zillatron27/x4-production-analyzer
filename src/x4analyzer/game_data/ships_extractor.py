@@ -5,11 +5,22 @@ import logging
 import xml.etree.ElementTree as ET
 from dataclasses import dataclass, asdict
 from pathlib import Path
-from typing import Dict, List, Optional
+from typing import Dict, List, Optional, Union
 
 from .catalog_reader import CatalogReader
 
 logger = logging.getLogger("x4analyzer.game_data")
+
+
+def safe_int(value: Union[str, None], default: int = 0) -> int:
+    """Safely convert a value to int, returning default on failure."""
+    if value is None:
+        return default
+    try:
+        return int(value)
+    except (ValueError, TypeError):
+        logger.debug(f"Could not convert '{value}' to int, using default {default}")
+        return default
 
 
 @dataclass
@@ -97,7 +108,7 @@ class ShipsExtractor:
             self._loaded = True
             return True
 
-        except Exception as e:
+        except (json.JSONDecodeError, KeyError, TypeError, IOError, OSError) as e:
             logger.warning(f"Failed to load cache: {e}")
             return False
 
@@ -116,7 +127,7 @@ class ShipsExtractor:
             with open(cache_path, 'w') as f:
                 json.dump(data, f, indent=2)
             logger.info(f"Saved {len(self.ships)} ships to cache")
-        except Exception as e:
+        except (IOError, OSError, TypeError) as e:
             logger.error(f"Failed to save cache: {e}")
 
     def extract(self, force_reload: bool = False) -> Dict[str, ShipData]:
@@ -149,7 +160,7 @@ class ShipsExtractor:
             self._loaded = True
             self._save_to_cache()
 
-        except Exception as e:
+        except (ET.ParseError, IOError, OSError) as e:
             logger.error(f"Failed to extract ship data: {e}")
 
         return self.ships
@@ -168,13 +179,15 @@ class ShipsExtractor:
                 if not content:
                     continue
 
-                root = ET.fromstring(content)
+                # Parse with explicit parser for XXE protection
+                parser = ET.XMLParser()
+                root = ET.fromstring(content, parser=parser)
                 for macro_elem in root.findall(".//macro[@class='storage']"):
                     storage_data = self._parse_storage_macro(macro_elem)
                     if storage_data:
                         self.storage[storage_data.macro_name] = storage_data
 
-            except Exception as e:
+            except (ET.ParseError, ValueError) as e:
                 logger.debug(f"Failed to parse storage macro {filepath}: {e}")
 
         logger.info(f"Extracted {len(self.storage)} storage macros")
@@ -189,7 +202,7 @@ class ShipsExtractor:
         if cargo_elem is None:
             return None
 
-        cargo_max = int(cargo_elem.get("max", "0"))
+        cargo_max = safe_int(cargo_elem.get("max"), default=0)
         cargo_tags = cargo_elem.get("tags", "container")
 
         return ShipStorageData(
@@ -220,7 +233,9 @@ class ShipsExtractor:
                 if not content:
                     continue
 
-                root = ET.fromstring(content)
+                # Parse with explicit parser for XXE protection
+                parser = ET.XMLParser()
+                root = ET.fromstring(content, parser=parser)
                 for macro_elem in root.findall(".//macro"):
                     ship_class = macro_elem.get("class", "")
                     if ship_class.startswith("ship_"):
@@ -228,7 +243,7 @@ class ShipsExtractor:
                         if ship_data:
                             self.ships[ship_data.macro_name] = ship_data
 
-            except Exception as e:
+            except (ET.ParseError, ValueError) as e:
                 logger.debug(f"Failed to parse ship macro {filepath}: {e}")
 
         logger.info(f"Extracted {len(self.ships)} ship macros")

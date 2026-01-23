@@ -3,12 +3,22 @@
 import gzip
 import logging
 from pathlib import Path
-from typing import Optional, Callable, Dict, List, Any
+from typing import Optional, Callable, Dict, List, Any, Union
 from lxml.etree import iterparse
 from dataclasses import dataclass, field
 
-from ..models.entities import Station, ProductionModule, Ship, TradeResource, EmpireData
+from ..models.entities import Station, ProductionModule, Ship, ShipPurpose, TradeResource, EmpireData
 from ..models.ware_database import get_ware
+
+
+def safe_int(value: Union[str, None], default: int = 0) -> int:
+    """Safely convert a value to int, returning default on failure."""
+    if value is None:
+        return default
+    try:
+        return int(value)
+    except (ValueError, TypeError):
+        return default
 
 
 def setup_logger():
@@ -387,8 +397,8 @@ class StreamingParser:
                         if station:
                             is_seller = elem.get('seller') is not None
                             is_buyer = elem.get('buyer') is not None
-                            amount = int(elem.get('amount', 0))
-                            desired = int(elem.get('desired', 0))
+                            amount = safe_int(elem.get('amount'), default=0)
+                            desired = safe_int(elem.get('desired'), default=0)
 
                             if ware_id not in station.trade_wares:
                                 station.trade_wares[ware_id] = {'sell': [], 'buy': []}
@@ -406,7 +416,7 @@ class StreamingParser:
                     if comp_info['class'].startswith('ship_') or comp_info['class'] == 'ship':
                         ship = self._ships.get(comp_info['id'])
                         if ship:
-                            ship.cargo_capacity = int(elem.get('max', 0))
+                            ship.cargo_capacity = safe_int(elem.get('max'), default=0)
 
                 # Clear element and remove from parent to free memory
                 elem.clear()
@@ -662,7 +672,7 @@ class StreamingParser:
 
         return result
 
-    def _determine_ship_purpose(self, ship: ParsedShip) -> str:
+    def _determine_ship_purpose(self, ship: ParsedShip) -> ShipPurpose:
         """
         Determine ship's current purpose/role from orders and behavior.
 
@@ -675,30 +685,30 @@ class StreamingParser:
 
         # Check order type first (most reliable for current behavior)
         if 'trade' in order_type:
-            return 'trader'
+            return ShipPurpose.TRADER
         elif 'mining' in order_type:
-            return 'miner'
+            return ShipPurpose.MINER
         elif 'build' in order_type:
-            return 'builder'
+            return ShipPurpose.BUILDER
 
         # Check purpose attribute
         if 'trade' in purpose:
-            return 'trader'
+            return ShipPurpose.TRADER
         elif 'mine' in purpose:
-            return 'miner'
+            return ShipPurpose.MINER
         elif 'build' in purpose or 'moveto' in purpose:
-            return 'builder'
+            return ShipPurpose.BUILDER
 
         # Check macro for ship role hints
         if 'trans' in macro or 'freighter' in macro or 'hauler' in macro:
-            return 'trader'
+            return ShipPurpose.TRADER
         elif 'miner' in macro or 'mining' in macro:
-            return 'miner'
+            return ShipPurpose.MINER
         elif 'builder' in macro or 'construct' in macro:
-            return 'builder'
+            return ShipPurpose.BUILDER
         elif 'fighter' in macro or 'corvette' in macro or 'frigate' in macro:
-            return 'combat'
+            return ShipPurpose.COMBAT
         elif 'carrier' in macro or 'destroyer' in macro or 'battleship' in macro:
-            return 'combat'
+            return ShipPurpose.COMBAT
 
-        return 'other'
+        return ShipPurpose.OTHER
